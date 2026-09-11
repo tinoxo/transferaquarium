@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Transfer Requirements Dashboard — Valentino Larios</title>
+<meta name="description" content="Transfer requirements tracker: Skyline College → USC Marshall / UCLA / UC Berkeley, Fall 2027 transfer.">
+<meta name="theme-color" content="#04121f">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐠</text></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============================================================
+     TITLE SCREEN — the aquarium
+     The canvas below is rendered entirely by tank.js.
+     Swap that file to swap the tank; nothing else depends on it.
+     ============================================================ -->
+<header id="tank-screen">
+  <canvas id="tank-canvas" aria-hidden="true"></canvas>
+
+  <div class="tank-overlay">
+    <p class="eyebrow">Skyline College → Fall 2027 Transfer</p>
+    <h1>Transfer Requirements Dashboard</h1>
+    <p class="sub">Every course, every requirement, and what each one actually counts for —
+       across Cal-GETC, USC GE, and major prep.</p>
+
+    <div class="tank-stats" id="tank-stats"></div>
+
+    <button class="enter-btn" id="enter-btn" type="button">
+      Open the dashboard <span class="arr">↓</span>
+    </button>
+  </div>
+
+  <div class="scroll-hint">scroll</div>
+</header>
+
+<!-- ============================================================
+     DASHBOARD
+     ============================================================ -->
+<nav id="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">🐠 Transfer</span>
+    <a href="#overview">Overview</a>
+    <a href="#open">Still Open</a>
+    <a href="#terms">Schedule</a>
+    <a href="#calgetc">Cal-GETC</a>
+    <a href="#uscge">USC GE</a>
+    <a href="#majorprep">Major Prep</a>
+    <a href="#gpa">GPA</a>
+    <a href="#whatif">What-If</a>
+    <a href="#contacts">Contacts</a>
+  </div>
+</nav>
+
+<main>
+
+  <section id="overview">
+    <div class="sec-head">
+      <h2>Overview</h2>
+      <p id="ov-sub"></p>
+    </div>
+    <div id="ov-premise"></div>
+    <div class="grid grid-3" id="ov-schools" style="margin-top:14px"></div>
+    <div style="margin-top:14px" id="ov-ap"></div>
+  </section>
+
+  <section id="open">
+    <div class="sec-head">
+      <h2>Still Open</h2>
+      <p>The real action items, derived live from the trackers below.</p>
+    </div>
+    <div class="card" id="open-list"></div>
+  </section>
+
+  <section id="terms">
+    <div class="sec-head">
+      <h2>Course Schedule</h2>
+      <p>Each course tagged with what it actually fulfills. Summer 2027 is a planning
+         scratchpad — nothing there is committed.</p>
+    </div>
+    <div id="terms-list"></div>
+  </section>
+
+  <section id="calgetc">
+    <div class="sec-head">
+      <h2 id="cg-title">Cal-GETC</h2>
+      <p id="cg-sub"></p>
+    </div>
+    <div class="card" id="cg-list"></div>
+  </section>
+
+  <section id="uscge">
+    <div class="sec-head">
+      <h2 id="usc-title">USC General Education</h2>
+      <p id="usc-sub"></p>
+    </div>
+    <div id="usc-residency" style="margin-bottom:14px"></div>
+    <div class="card" id="usc-list"></div>
+  </section>
+
+  <section id="majorprep">
+    <div class="sec-head">
+      <h2>Major Prep</h2>
+      <p id="mp-sub"></p>
+    </div>
+    <div class="grid grid-3" id="mp-list"></div>
+  </section>
+
+  <section id="gpa">
+    <div class="sec-head">
+      <h2>GPA Tracker</h2>
+      <p>Enter grades as they're confirmed — term and cumulative GPA recalculate automatically.
+         Entries save in this browser.</p>
+    </div>
+    <div class="gpa-top" id="gpa-tiles"></div>
+    <div class="card" id="gpa-terms"></div>
+  </section>
+
+  <section id="whatif">
+    <div class="sec-head">
+      <h2>What-If Scenarios</h2>
+      <p>Toggle unconfirmed courses on to see how they'd change Cal-GETC and USC GE status.
+         This never touches the confirmed Fall 2026 / Spring 2027 data above.</p>
+    </div>
+    <div class="whatif-banner" id="wi-banner"></div>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3 style="margin:0 0 4px;font-size:15px">Summer 2027 candidates</h3>
+        <p style="margin:0 0 14px;font-size:12.5px;color:var(--ink-faint)">Not scheduled. Not committed.</p>
+        <div id="wi-toggles"></div>
+
+        <div class="custom-course">
+          <h4>Test any other course</h4>
+          <p class="hint">Check a hypothetical course's GE impact before registering.</p>
+          <div class="cc-fields">
+            <div>
+              <label for="cc-code">Course</label>
+              <input type="text" id="cc-code" placeholder="e.g. PHYS 210" style="min-width:130px">
+            </div>
+            <div>
+              <label for="cc-units">Units</label>
+              <input type="number" id="cc-units" value="3" min="0" max="12" step="0.5" style="min-width:72px">
+            </div>
+            <button class="btn violet" id="cc-add" type="button">Add</button>
+          </div>
+          <div style="margin-top:12px">
+            <label style="font-size:12px;color:var(--ink-dim);display:block;margin-bottom:6px">Cal-GETC areas it would satisfy</label>
+            <div class="chip-pick" id="cc-calgetc"></div>
+          </div>
+          <div style="margin-top:12px">
+            <label style="font-size:12px;color:var(--ink-dim);display:block;margin-bottom:6px">USC GE categories it would satisfy</label>
+            <div class="chip-pick" id="cc-usc"></div>
+          </div>
+          <div class="custom-list" id="cc-list"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 4px;font-size:15px">Impact</h3>
+        <p style="margin:0 0 14px;font-size:12.5px;color:var(--ink-faint)">What changes if the selected courses are taken.</p>
+        <div class="delta-list" id="wi-deltas"></div>
+        <div style="margin-top:18px;display:flex;gap:9px;flex-wrap:wrap">
+          <button class="btn ghost" id="wi-reset" type="button">Clear scenario</button>
+          <button class="btn violet" id="wi-all" type="button">Select all candidates</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="contacts">
+    <div class="sec-head">
+      <h2>Deadlines &amp; Contacts</h2>
+      <p>Reference. Keep the USC date visible — it's the binding one.</p>
+    </div>
+    <div id="deadline-strip"></div>
+    <div class="card" id="contact-list"></div>
+  </section>
+
+</main>
+
+<footer>
+  <p id="foot-meta"></p>
+  <p>Static site — no backend. All data lives in <code>data.js</code>.</p>
+</footer>
+
+<script src="data.js"></script>
+<script src="tank.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
