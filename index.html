@@ -12,27 +12,57 @@
 <body>
 
 <!-- ============================================================
-     TITLE SCREEN — the aquarium
-     The canvas below is rendered entirely by tank.js.
-     Swap that file to swap the tank; nothing else depends on it.
+     TITLE SCREEN — the fish tank
+     The tank is tinoxo/fish-tank, vendored as a built app in /tank and
+     embedded in an iframe. The frame boundary is doing real work: the tank
+     sets `html,body{overflow:hidden}` and appends its DEX / camera / ANGLE
+     buttons straight to its own document.body — sandboxed, none of that
+     reaches this page.
+
+     The embedded copy is deliberately NOT interactive (pointer-events:none,
+     see styles.css) because an interactive iframe permanently swallows the
+     page's scroll in Chromium. It still auto-orbits, so it reads as alive.
+     The real thing is one click away in its own tab via "Open the tank".
+     See tank/SOURCE.md to update the build.
      ============================================================ -->
 <header id="tank-screen">
-  <canvas id="tank-canvas" aria-hidden="true"></canvas>
-
-  <div class="tank-overlay">
-    <p class="eyebrow">Skyline College → Fall 2027 Transfer</p>
-    <h1>Transfer Requirements Dashboard</h1>
-    <p class="sub">Every course, every requirement, and what each one actually counts for —
-       across Cal-GETC, USC GE, and major prep.</p>
-
-    <div class="tank-stats" id="tank-stats"></div>
-
-    <button class="enter-btn" id="enter-btn" type="button">
-      Open the dashboard <span class="arr">↓</span>
-    </button>
+  <div class="tank-placeholder" id="tank-placeholder" aria-hidden="true">
+    <span>Filling tank&hellip;</span>
   </div>
 
-  <div class="scroll-hint">scroll</div>
+  <iframe
+    id="tank-frame"
+    src="tank/index.html"
+    title="3D reef tank, playing as a backdrop"
+    tabindex="-1"
+    loading="eager"></iframe>
+
+  <div class="tank-overlay">
+    <div class="tank-top">
+      <p class="eyebrow">Skyline College &rarr; Fall 2027 Transfer</p>
+      <h1>Transfer Requirements Dashboard</h1>
+    </div>
+
+    <div class="tank-bottom">
+      <p class="sub">Every course, every requirement, and what each one actually counts for
+         &mdash; across Cal-GETC, USC GE, and major prep.</p>
+
+      <div class="tank-stats" id="tank-stats"></div>
+
+      <div class="tank-actions">
+        <button class="enter-btn" id="enter-btn" type="button">
+          Open the dashboard <span class="arr">&darr;</span>
+        </button>
+        <a class="tank-link" href="tank/index.html" target="_blank" rel="noopener">
+          Open the tank <span aria-hidden="true">&#8599;</span>
+        </a>
+      </div>
+
+      <p class="tank-hint">The tank runs on its own here. Open it full-screen for the
+         dex, photo mode and free-fly camera.</p>
+    </div>
+  </div>
+
 </header>
 
 <!-- ============================================================
@@ -182,10 +212,10 @@
 <footer>
   <p id="foot-meta"></p>
   <p>Static site — no backend. All data lives in <code>data.js</code>.</p>
+  <p>Tank: <a href="https://github.com/tinoxo/fish-tank">tinoxo/fish-tank</a> · <a href="tank/CREDITS.md">model credits</a></p>
 </footer>
 
 <script src="data.js"></script>
-<script src="tank.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

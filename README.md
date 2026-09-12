@@ -37,8 +37,8 @@ Sections:
 index.html    Page structure only — all content is rendered from data.js
 data.js       ← EDIT THIS. Every course, requirement and contact lives here.
 app.js        Rendering + the requirement-resolution engine
-tank.js       The aquarium title screen (self-contained, swappable)
 styles.css    Styling
+tank/         Vendored build of tinoxo/fish-tank — see tank/SOURCE.md
 ```
 
 ## Editing the data
@@ -86,13 +86,47 @@ two courses where one is done and one is planned reads "will be satisfied", not
 AP credit is registered as a source for Cal-GETC slots and **never** for USC
 categories — that exclusion is what makes the USC tracker honest.
 
-## The aquarium
+## The fish tank
 
-`tank.js` is fully self-contained. Its only contract is: render something into
-`<canvas id="tank-canvas">` inside `#tank-screen`. It doesn't read from `app.js` or
-`data.js`, and nothing reads from it.
+The title screen is [tinoxo/fish-tank](https://github.com/tinoxo/fish-tank) — a
+Three.js voxel reef tank — built and vendored into `tank/`, embedded in an iframe.
 
-To swap in a different fish tank, replace that one file.
+**Why an iframe and not a direct include.** The tank sets
+`html, body { overflow: hidden }` and appends its DEX, camera and ANGLE controls
+straight onto its own `document.body` at fixed and absolute positions. Dropped
+into this page directly, the overflow rule would stop the dashboard scrolling and
+those controls would drift away from the canvas as the page moved. The frame
+boundary contains all of it, with no changes to the tank's source.
+
+**Why the embedded tank is inert.** `#tank-frame` is permanently
+`pointer-events: none`, and that is load-bearing. Chromium routes wheel and touch
+to an iframe in the compositor, so with a live frame filling the title screen the
+page will not scroll over it at all. Measured, in that order:
+
+| Attempt | Result |
+|---|---|
+| Transparent DOM overlay stacked above the frame | parent received zero wheel events |
+| `pointer-events: none`, toggled back on when activated | scrolls — until first activation |
+| …then `display` toggle to break the latch | still trapped |
+| …then `visibility` toggle | still trapped |
+| …then detach and reattach the node | still trapped |
+
+Once that frame has been an interaction target, the page never gets scrolling back
+over it. So the embedded copy is never interactive. It loses nothing visually: the
+tank auto-orbits with no input at all (`freeCamera.shouldAutoRotate()` is true
+while nothing is being dragged), so it stays alive as a backdrop.
+
+The full interactive tank — dex, photo mode, free-fly camera — is one click away
+via **Open the tank**, which opens `tank/index.html` in its own tab where nothing
+has to share scroll with it. Because the embedded controls can't be clicked,
+`app.js` injects a stylesheet into the frame to hide them rather than leave dead
+buttons floating over the title.
+
+Deep links skip the title screen entirely — opening `…/#open` to check an action
+item lands on the dashboard, not on a WebGL scene.
+
+To update the tank, follow `tank/SOURCE.md`. Model attribution lives in
+`tank/CREDITS.md` and travels with the build.
 
 ## Deploying to GitHub Pages
 
@@ -111,7 +145,11 @@ Live at `https://tinoxo.github.io/transferaquarium/` a minute or two later.
 python3 -m http.server 8000
 ```
 
-Then open `http://localhost:8000`. Opening `index.html` directly works too.
+Then open `http://localhost:8000`.
+
+Use a server, not `file://` — the tank's bundle is an ES module served with
+`crossorigin`, which a `file://` origin blocks. The dashboard itself works fine
+either way; only the tank needs the server.
 
 ## Notes
 
@@ -120,3 +158,7 @@ Then open `http://localhost:8000`. Opening `index.html` directly works too.
 - Unit counts for Summer 2026 and the Summer 2027 candidates weren't in the source
   brief and are marked with an asterisk. Confirm them in DegreeWorks.
 - Data current as of September 2026 (SMCCD DegreeWorks).
+- `tank/CREDITS.md` carries the model attribution from the fish-tank repo,
+  including entries whose licensing is marked unconfirmed there. Publishing this
+  repo republishes those models, so that uncertainty applies here too — worth
+  resolving before the site is shared widely.

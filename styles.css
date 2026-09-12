@@ -57,26 +57,80 @@ a { color: var(--blue); }
   background: linear-gradient(180deg, #0a3a5c 0%, #062639 45%, #03121e 100%);
 }
 
-#tank-canvas {
+/* The tank itself, sandboxed in an iframe.
+
+   pointer-events:none is load-bearing and permanent, not a default to toggle.
+   Chromium routes wheel and touch to an iframe in the compositor, and once the
+   frame has been an interaction target the parent page NEVER gets scrolling
+   back over it — measured: a DOM overlay on top does not divert it, and
+   neither does display/visibility toggling nor detaching and reattaching the
+   node. The only reliable state is "never interactive".
+
+   That is no real loss. The tank auto-orbits with no input at all
+   (freeCamera.shouldAutoRotate() is true while nothing is being dragged), so
+   it stays alive as a backdrop, and the full interactive version — dex, photo
+   mode, free-fly camera — is one click away at tank/index.html in its own tab,
+   where nothing has to share scroll with it. */
+#tank-frame {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
+  border: 0;
   display: block;
+  z-index: 1;
+  pointer-events: none;
 }
 
+/* Shown until the tank's bundle and models arrive, so the title screen
+   never renders as a blank rectangle. */
+.tank-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #10527d 0%, #08304b 42%, #03121e 100%);
+}
+/* display:flex above beats the UA [hidden] rule, so state it explicitly —
+   without this the placeholder never leaves the hit-test path. */
+.tank-placeholder[hidden] { display: none; }
+
+.tank-placeholder span {
+  font-family: "Courier New", monospace;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+  color: #7fc4de;
+  opacity: .8;
+}
+
+/* Top and bottom scrims rather than a slab in the middle — the tank is the
+   picture, and a centered panel covers exactly the part worth looking at. */
 .tank-overlay {
   position: absolute;
   inset: 0;
+  z-index: 3;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: space-between;
   align-items: center;
   text-align: center;
-  padding: 24px;
   pointer-events: none;
-  background:
-    radial-gradient(ellipse at 50% 45%, rgba(3,18,30,.55) 0%, rgba(3,18,30,.12) 45%, transparent 72%);
+}
+
+.tank-top {
+  width: 100%;
+  padding: 40px 24px 80px;
+  background: linear-gradient(180deg, rgba(3,17,28,.9) 0%, rgba(3,17,28,.58) 52%, rgba(3,17,28,0) 100%);
+}
+
+.tank-bottom {
+  width: 100%;
+  padding: 80px 24px 34px;
+  background: linear-gradient(0deg, rgba(3,17,28,.92) 0%, rgba(3,17,28,.66) 48%, rgba(3,17,28,0) 100%);
 }
 
 .tank-overlay .eyebrow {
@@ -84,39 +138,39 @@ a { color: var(--blue); }
   letter-spacing: .28em;
   text-transform: uppercase;
   color: var(--teal);
-  margin: 0 0 18px;
+  margin: 0 0 14px;
   text-shadow: 0 2px 14px rgba(0,0,0,.8);
 }
 
 .tank-overlay h1 {
-  margin: 0;
-  font-size: clamp(2rem, 7.5vw, 4.25rem);
-  line-height: 1.04;
+  margin: 0 auto;
+  font-size: clamp(1.75rem, 5.4vw, 3.15rem);
+  line-height: 1.06;
   font-weight: 700;
   letter-spacing: -.02em;
   text-shadow: 0 4px 30px rgba(0,0,0,.75), 0 1px 3px rgba(0,0,0,.6);
-  max-width: 16ch;
+  max-width: 18ch;
 }
 
 .tank-overlay .sub {
-  margin: 18px 0 0;
-  font-size: clamp(.9rem, 2.4vw, 1.1rem);
+  margin: 0 auto;
+  font-size: clamp(.88rem, 2.2vw, 1.05rem);
   color: var(--ink-dim);
   text-shadow: 0 2px 16px rgba(0,0,0,.85);
-  max-width: 46ch;
+  max-width: 52ch;
 }
 
 .tank-stats {
-  margin-top: 30px;
+  margin-top: 18px;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 10px;
+  gap: 9px;
 }
 
 .tank-stat {
-  background: rgba(4,18,31,.55);
-  border: 1px solid rgba(120,190,220,.22);
+  background: rgba(4,18,31,.6);
+  border: 1px solid rgba(120,190,220,.24);
   backdrop-filter: blur(7px);
   -webkit-backdrop-filter: blur(7px);
   border-radius: 999px;
@@ -127,14 +181,17 @@ a { color: var(--blue); }
 }
 .tank-stat b { color: var(--teal); font-weight: 650; }
 
+/* pointer-events:auto is required — .tank-overlay above is `none` so that
+   clicks fall through to the tank shield, and this button has to opt back in
+   or it cannot be clicked at all. */
 .enter-btn {
   pointer-events: auto;
-  margin-top: 34px;
+  margin-top: 22px;
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  background: rgba(53,214,192,.13);
-  border: 1px solid rgba(53,214,192,.5);
+  background: rgba(53,214,192,.16);
+  border: 1px solid rgba(53,214,192,.55);
   color: var(--teal);
   font: inherit;
   font-size: 14px;
@@ -147,36 +204,45 @@ a { color: var(--blue); }
   -webkit-backdrop-filter: blur(7px);
   transition: background .2s, transform .2s, border-color .2s;
 }
-.enter-btn:hover { background: rgba(53,214,192,.24); border-color: var(--teal); transform: translateY(-2px); }
+.enter-btn:hover { background: rgba(53,214,192,.28); border-color: var(--teal); transform: translateY(-2px); }
 .enter-btn .arr { transition: transform .2s; }
 .enter-btn:hover .arr { transform: translateY(3px); }
 
-.scroll-hint {
-  position: absolute;
-  bottom: 22px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 10.5px;
-  letter-spacing: .22em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  animation: bob 2.4s ease-in-out infinite;
+.tank-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  align-items: center;
 }
-@keyframes bob { 0%,100% { transform: translate(-50%,0); } 50% { transform: translate(-50%,7px); } }
 
-.tank-fallback-note {
-  position: absolute;
-  left: 50%;
-  bottom: 56px;
-  transform: translateX(-50%);
-  font-size: 11px;
-  color: var(--ink-faint);
+.tank-link {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 22px;
   background: rgba(4,18,31,.6);
-  border: 1px dashed rgba(120,190,220,.28);
-  border-radius: 8px;
-  padding: 5px 11px;
-  white-space: nowrap;
+  border: 1px solid rgba(120,190,220,.34);
+  color: var(--ink-dim);
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 12px 20px;
+  border-radius: 999px;
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  transition: color .18s, border-color .18s, background .18s;
 }
+.tank-link:hover { color: var(--ink); border-color: rgba(120,190,220,.7); background: rgba(4,18,31,.8); }
+
+.tank-hint {
+  margin: 13px 0 0;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  letter-spacing: .02em;
+}
+
 
 /* ---------- Nav ---------- */
 
@@ -685,6 +751,8 @@ footer p { margin: 0 0 5px; }
 .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 
 @media (max-width: 560px) {
+  .tank-top { padding: 26px 16px 60px; }
+  .tank-bottom { padding: 60px 16px 26px; }
   .course { grid-template-columns: auto 1fr; }
   .course-units { grid-column: 2; text-align: left; padding-top: 6px; }
   .gpa-row { grid-template-columns: 1fr auto; }

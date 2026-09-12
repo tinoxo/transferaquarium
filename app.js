@@ -814,6 +814,64 @@
     });
   }
 
+  /* ---------------- title screen ---------------- */
+
+  function initTank() {
+    const frame = $("#tank-frame");
+    const ph = $("#tank-placeholder");
+
+    if (frame && ph) {
+      const hide = function () { ph.style.opacity = "0"; setTimeout(function () { ph.hidden = true; }, 500); };
+      ph.style.transition = "opacity .5s ease";
+      if (frame.contentDocument && frame.contentDocument.readyState === "complete") hide();
+      frame.addEventListener("load", hide);
+      // The tank's own "Filling tank…" screen covers the gap between the
+      // iframe firing load and the models actually arriving; don't wait
+      // on it forever if the bundle fails outright.
+      setTimeout(hide, 12000);
+    }
+
+    // The embedded tank is decorative: pointer-events:none keeps the page
+    // scrollable (see the #tank-frame comment in styles.css). Its DEX,
+    // camera and ANGLE buttons therefore can't be clicked here, so hide
+    // them inside the frame rather than float dead controls over the
+    // title. The frame is same-origin, so a stylesheet injection does it
+    // without modifying the vendored build. The real controls live in the
+    // standalone tab that "Open the tank" opens.
+    if (frame) {
+      const hideFrameChrome = function () {
+        try {
+          const doc = frame.contentDocument;
+          if (!doc || doc.getElementById("embed-chrome")) return;
+          const st = doc.createElement("style");
+          st.id = "embed-chrome";
+          st.textContent = "body > button { display: none !important; }";
+          (doc.head || doc.documentElement).appendChild(st);
+        } catch (err) { /* cross-origin: the buttons stay, harmlessly inert */ }
+      };
+      frame.addEventListener("load", hideFrameChrome);
+      hideFrameChrome();
+    }
+
+    // Deep links skip the title screen entirely. Someone opening
+    // …/#open to check an action item shouldn't land on a WebGL scene
+    // first — and they shouldn't have to scroll past a frame that
+    // swallows drag gestures on a phone.
+    const hash = window.location.hash;
+    if (hash && hash.length > 1) {
+      const target = document.querySelector(hash);
+      if (target) {
+        // after layout settles — the iframe resizing can otherwise
+        // shift the anchor out from under the initial jump
+        requestAnimationFrame(function () {
+          setTimeout(function () {
+            target.scrollIntoView({ behavior: "auto", block: "start" });
+          }, 60);
+        });
+      }
+    }
+  }
+
   /* ---------------- boot ---------------- */
 
   load();
@@ -829,4 +887,5 @@
   renderWhatIf();
   renderContacts();
   initNav();
+  initTank();
 })();
