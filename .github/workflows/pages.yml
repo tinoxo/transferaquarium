@@ -1,0 +1,40 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# `pages: write` is what lets configure-pages turn Pages on by itself
+# (enablement: true), so the site goes live without anyone visiting the
+# repository settings. id-token is required by deploy-pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      # No build step: the site is plain HTML/CSS/JS at the repo root and
+      # tank/ is already a built bundle. Upload the tree as-is.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
