@@ -1,13 +1,13 @@
 /* ============================================================
    app.js — renders the dashboard from data.js
-   Independent of tank.js.
+   Independent of the tank in /tank.
    ============================================================ */
 
 (function () {
   "use strict";
 
   const D = window.DATA;
-  const $ = (sel) => document.querySelector(sel);
+  const $ = (s) => document.querySelector(s);
   const el = (tag, cls, html) => {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -19,51 +19,38 @@
 
   /* ---------------- state ---------------- */
 
-  const LS = "vt-dashboard-v1";
-  const state = {
-    whatIf: {},        // courseId -> bool
-    custom: [],        // {id, code, units, calgetc:[], usc:[]}
-    grades: {},        // courseId -> letter
-    priorUnits: 0,
-    priorGPA: 0
-  };
+  const LS = "vt-dashboard-v2";
+  const state = { whatIf: {}, custom: [], grades: {} };
 
   function load() {
     try {
-      const raw = localStorage.getItem(LS);
-      if (!raw) return;
-      const o = JSON.parse(raw);
-      if (o && typeof o === "object") {
-        Object.assign(state, {
-          whatIf: o.whatIf || {},
-          custom: Array.isArray(o.custom) ? o.custom : [],
-          grades: o.grades || {},
-          priorUnits: Number(o.priorUnits) || 0,
-          priorGPA: Number(o.priorGPA) || 0
-        });
-      }
+      const o = JSON.parse(localStorage.getItem(LS) || "{}");
+      Object.assign(state, {
+        whatIf: o.whatIf || {},
+        custom: Array.isArray(o.custom) ? o.custom : [],
+        grades: o.grades || {}
+      });
     } catch (e) { /* storage blocked — run with defaults */ }
   }
   function save() {
     try { localStorage.setItem(LS, JSON.stringify(state)); } catch (e) { /* no-op */ }
   }
 
-  /* ---------------- course helpers ---------------- */
+  /* ---------------- courses ---------------- */
 
-  const RANK = { completed: 4, ap: 4, "in-progress": 3, planned: 2, candidate: 1 };
+  const RANK = { completed: 4, "in-progress": 3, planned: 2, candidate: 1 };
+  const ORDER = { open: 0, whatif: 1, planned: 2, "in-progress": 3, complete: 4 };
 
-  const ALL_TERMS = D.terms;
-  const CONFIRMED_COURSES = ALL_TERMS
-    .filter((t) => t.status !== "candidate")
-    .reduce((a, t) => a.concat(t.courses.map((c) => Object.assign({ termId: t.id, termName: t.name }, c))), []);
-  const CANDIDATE_COURSES = ALL_TERMS
-    .filter((t) => t.status === "candidate")
-    .reduce((a, t) => a.concat(t.courses.map((c) => Object.assign({ termId: t.id, termName: t.name }, c))), []);
+  const withTerm = (t) => t.courses.map((c) => Object.assign({ termId: t.id, termName: t.name }, c));
+  const CONFIRMED = D.terms.filter((t) => t.status !== "candidate").reduce((a, t) => a.concat(withTerm(t)), []);
+  const CANDIDATES = D.terms.filter((t) => t.status === "candidate").reduce((a, t) => a.concat(withTerm(t)), []);
+  const byId = {};
+  CONFIRMED.concat(CANDIDATES).forEach((c) => { byId[c.id] = c; });
 
-  function activeCourses(includeScenario) {
-    let list = CONFIRMED_COURSES.slice();
-    if (includeScenario) {
-      list = list.concat(CANDIDATE_COURSES.filter((c) => state.whatIf[c.id]));
+  function activeCourses(scenario) {
+    let list = CONFIRMED.slice();
+    if (scenario) {
+      list = list.concat(CANDIDATES.filter((c) => state.whatIf[c.id]));
       list = list.concat(state.custom.map((c) => Object.assign({}, c, { status: "candidate", termName: "Hypothetical" })));
     }
     return list;
@@ -71,697 +58,619 @@
 
   /* ---------------- requirement engine ---------------- */
 
-  // Returns { status, viaAP, unconfirmed, sources:[], have, needs }
   function resolveSlot(sources, needs) {
     needs = needs || 1;
     const sorted = sources.slice().sort((a, b) => RANK[b.rank] - RANK[a.rank]);
     const counted = sorted.slice(0, needs);
-
     if (counted.length < needs) {
-      return {
-        status: "open", viaAP: false, unconfirmed: false,
-        sources: sorted, counted: counted, have: counted.length, needs: needs
-      };
+      return { status: "open", unconfirmed: false, counted: counted, have: counted.length, needs: needs };
     }
-    let minRank = 5;
-    counted.forEach((s) => { minRank = Math.min(minRank, RANK[s.rank]); });
-
-    let status = minRank === 4 ? "complete"
-               : minRank === 3 ? "in-progress"
-               : minRank === 2 ? "planned"
-               : "whatif";
-
+    let min = 5;
+    counted.forEach((s) => { min = Math.min(min, RANK[s.rank]); });
     return {
-      status: status,
-      viaAP: counted.some((s) => s.rank === "ap"),
-      allAP: counted.every((s) => s.rank === "ap"),
+      status: min === 4 ? "complete" : min === 3 ? "in-progress" : min === 2 ? "planned" : "whatif",
       unconfirmed: counted.some((s) => s.unconfirmed),
-      sources: sorted,
       counted: counted,
       have: counted.length,
       needs: needs
     };
   }
 
-  function computeCalGETC(includeScenario) {
-    const courses = activeCourses(includeScenario);
-    const out = {};
-
-    D.calgetc.areas.forEach((area) => {
-      area.slots.forEach((slot) => {
-        const sources = [];
-        D.apCredit.forEach((ap) => {
-          if (ap.calgetc.indexOf(slot.id) !== -1) {
-            sources.push({ label: ap.name, rank: "ap", ap: true });
-          }
-        });
-        courses.forEach((c) => {
-          if ((c.calgetc || []).indexOf(slot.id) !== -1) {
-            sources.push({
-              label: c.code, rank: c.status, term: c.termName,
-              scenario: c.status === "candidate"
-            });
-          }
-        });
-        out[slot.id] = resolveSlot(sources, slot.needs || 1);
-      });
-    });
-
-    // area rollup = weakest slot
-    const areaStatus = {};
-    const ORDER = { open: 0, whatif: 1, planned: 2, "in-progress": 3, complete: 4 };
-    D.calgetc.areas.forEach((area) => {
-      let worst = "complete", anyAP = false;
-      area.slots.forEach((slot) => {
-        const r = out[slot.id];
-        if (ORDER[r.status] < ORDER[worst]) worst = r.status;
-        if (r.viaAP) anyAP = true;
-      });
-      areaStatus[area.id] = { status: worst, viaAP: anyAP };
-    });
-
-    return { slots: out, areas: areaStatus };
+  function srcOf(c, key) {
+    return { course: c, rank: c.status, unconfirmed: key === "usc" && !!c.uscUnconfirmed,
+             scenario: c.status === "candidate" };
   }
 
-  function computeUSC(includeScenario) {
-    const courses = activeCourses(includeScenario);
+  function computeCalGETC(scenario) {
+    const courses = activeCourses(scenario);
+    const slots = {}, areas = {};
+    D.calgetc.areas.forEach((area) => {
+      area.slots.forEach((slot) => {
+        const src = courses.filter((c) => (c.calgetc || []).indexOf(slot.id) !== -1).map((c) => srcOf(c, "cg"));
+        slots[slot.id] = resolveSlot(src, slot.needs || 1);
+      });
+      let worst = "complete", units = 0;
+      const seen = {};
+      area.slots.forEach((slot) => {
+        const r = slots[slot.id];
+        if (ORDER[r.status] < ORDER[worst]) worst = r.status;
+        r.counted.forEach((s) => {
+          if (!seen[s.course.id]) { seen[s.course.id] = 1; units += s.course.units || 0; }
+        });
+      });
+      areas[area.id] = { status: worst, units: units };
+    });
+    return { slots: slots, areas: areas };
+  }
+
+  function computeUSC(scenario) {
+    const courses = activeCourses(scenario);
     const out = {};
     D.uscge.categories.forEach((cat) => {
-      const sources = [];
-      // NOTE: AP credit is deliberately never a source here. USC does not accept it for GE.
-      courses.forEach((c) => {
-        if ((c.usc || []).indexOf(cat.id) !== -1) {
-          sources.push({
-            label: c.code, rank: c.status, term: c.termName,
-            unconfirmed: !!c.uscUnconfirmed,
-            scenario: c.status === "candidate"
-          });
-        }
-      });
-      out[cat.id] = resolveSlot(sources, cat.needs || 1);
+      const src = courses.filter((c) => (c.usc || []).indexOf(cat.id) !== -1).map((c) => srcOf(c, "usc"));
+      out[cat.id] = resolveSlot(src, cat.needs || 1);
     });
     return out;
   }
 
-  /* ---------------- label helpers ---------------- */
+  /* ---------------- shared bits ---------------- */
 
-  function cgLabel(r) {
-    if (r.status === "complete") return r.allAP ? "Complete — via AP only" : (r.viaAP ? "Complete — partly via AP" : "Complete");
+  const ICON = {
+    complete:     '<span class="ico ico-done" aria-hidden="true">&#10003;</span>',
+    "in-progress":'<span class="ico ico-prog" aria-hidden="true">&#9680;</span>',
+    planned:      '<span class="ico ico-plan" aria-hidden="true">&#9675;</span>',
+    whatif:       '<span class="ico ico-what" aria-hidden="true">&#9675;</span>',
+    open:         '<span class="ico ico-open" aria-hidden="true">&#9675;</span>'
+  };
+  const PILL = {
+    complete:     '<span class="pill p-done">COMPLETE</span>',
+    "in-progress":'<span class="pill p-prog">IN-PROGRESS</span>',
+    planned:      '<span class="pill p-plan">REGISTERED</span>',
+    whatif:       '<span class="pill p-what">SCENARIO</span>',
+    open:         '<span class="pill p-open">INCOMPLETE</span>'
+  };
+  const label = (r, kind) => {
+    if (r.status === "complete") return "Complete";
     if (r.status === "in-progress") return "In progress";
-    if (r.status === "planned") return "Planned";
+    if (r.status === "planned") return r.unconfirmed ? "Likely — unconfirmed" : (kind === "usc" ? "Will be satisfied" : "Registered");
     if (r.status === "whatif") return "Would be satisfied";
     return r.have > 0 ? "Incomplete — " + r.have + " of " + r.needs : "Incomplete";
-  }
-  function uscLabel(r) {
-    if (r.status === "complete") return "Satisfied";
-    if (r.status === "in-progress") return "In progress";
-    if (r.status === "planned") return r.unconfirmed ? "Likely — unconfirmed" : "Will be satisfied";
-    if (r.status === "whatif") return "Would be satisfied";
-    return r.have > 0 ? "Open — " + r.have + " of " + r.needs : "Open";
-  }
-  function badgeClass(r) {
-    if (r.status === "complete") return r.allAP ? "b-ap" : "b-course";
-    if (r.status === "in-progress") return "b-progress";
-    if (r.status === "planned") return r.unconfirmed ? "b-unconf" : "b-planned";
-    if (r.status === "whatif") return "b-whatif";
-    return "b-open";
-  }
-  function slotClass(r) {
-    if (r.status === "open") return "slot s-open";
-    if (r.status === "whatif") return "slot s-whatif";
-    if (r.status === "complete" && r.allAP) return "slot s-ap";
-    return "slot";
-  }
-  function sourceText(r) {
-    if (!r.counted || !r.counted.length) return "Nothing assigned yet";
-    return r.counted.map((s) => {
-      let txt = "<b>" + esc(s.label) + "</b>";
-      if (s.ap) txt += " <span style='color:var(--amber)'>(AP — Cal-GETC only)</span>";
-      else if (s.term) txt += " · " + esc(s.term);
-      if (s.unconfirmed) txt += " <span style='color:var(--amber)'>(unconfirmed)</span>";
-      if (s.scenario) txt += " <span style='color:var(--violet)'>(scenario)</span>";
-      return txt;
-    }).join(" &nbsp;+&nbsp; ");
+  };
+
+  // One row of the audit-style course table
+  function courseRow(c, opts) {
+    opts = opts || {};
+    const g = gradeOf(c);
+    return '<div class="crow' + (opts.sub ? " sub" : "") + '">' +
+      '<div class="c-icon">' + (ICON[c.status === "completed" ? "complete" : c.status] || ICON.open) + "</div>" +
+      '<div class="c-req">' + esc(opts.reqName || "") + "</div>" +
+      '<div class="c-code">' + esc(c.code) + "</div>" +
+      '<div class="c-title">' + esc(c.title) +
+        (c.viaExam ? '<span class="via">via ' + esc(c.viaExam) + "</span>" : "") + "</div>" +
+      '<div class="c-grade">' + (g ? esc(g) : c.status === "completed" ? "—" : "") + "</div>" +
+      '<div class="c-units">' + (c.status === "completed" ? c.units : "(" + c.units + ")") +
+        (c.unitsAssumed ? "*" : "") + "</div>" +
+      '<div class="c-term">' + esc(c.termName || "") + "</div>" +
+    "</div>";
   }
 
-  /* ---------------- renderers ---------------- */
+  function stillNeeded(text, options) {
+    return '<div class="needed">' +
+      '<span class="n-lab">Still needed:</span>' +
+      '<span class="n-body">' + text +
+        (options && options.length
+          ? '<span class="opts">' + options.map((o) => '<code>' + esc(o) + "</code>").join('<i>or</i>') + "</span>"
+          : "") +
+      "</span></div>";
+  }
+
+  /* ---------------- title screen stats ---------------- */
 
   function renderTankStats() {
-    const cg = computeCalGETC(false);
     const usc = computeUSC(false);
-    const openUSC = D.uscge.categories.filter((c) => usc[c.id].status === "open").length;
-    const units = CONFIRMED_COURSES.reduce((a, c) => a + (c.units || 0), 0);
-
+    const open = D.uscge.categories.filter((c) => usc[c.id].status === "open").length;
     const stats = [
-      ["Cumulative GPA", D.meta.cumulativeGPA.toFixed(2)],
-      ["Units in plan", String(units)],
-      ["USC GE open", String(openUSC) + " of " + D.uscge.categories.length],
+      ["Degree GPA", D.meta.degreeGPA.toFixed(2)],
+      ["Units applied", D.meta.unitsApplied + " of " + D.meta.unitsRequired],
+      ["USC GE open", open + " of " + D.uscge.categories.length],
       ["USC deadline", "Feb 15, 2027"]
     ];
-    const wrap = $("#tank-stats");
-    wrap.innerHTML = "";
-    stats.forEach(([k, v]) => {
-      wrap.appendChild(el("div", "tank-stat", esc(k) + " <b>" + esc(v) + "</b>"));
-    });
+    const w = $("#tank-stats");
+    w.innerHTML = "";
+    stats.forEach(([k, v]) => w.appendChild(el("div", "tank-stat", esc(k) + " <b>" + esc(v) + "</b>")));
   }
+
+  /* ---------------- degree summary ---------------- */
+
+  function renderDegree() {
+    const m = D.meta;
+    const pct = m.progressPercent;
+    const R = 52, C = 2 * Math.PI * R;
+
+    $("#degree-block").innerHTML =
+      '<div class="card audit-head">' +
+        '<div class="ring-wrap">' +
+          '<svg class="ring" viewBox="0 0 120 120" role="img" aria-label="Degree progress ' + pct + ' percent">' +
+            '<circle class="ring-bg" cx="60" cy="60" r="' + R + '"></circle>' +
+            '<circle class="ring-fg" cx="60" cy="60" r="' + R + '" ' +
+              'stroke-dasharray="' + C.toFixed(1) + '" ' +
+              'stroke-dashoffset="' + (C * (1 - pct / 100)).toFixed(1) + '"></circle>' +
+            '<text class="ring-num" x="60" y="66">' + pct + "%</text>" +
+          "</svg>" +
+          '<div class="ring-cap">Requirements</div>' +
+        "</div>" +
+
+        '<div class="audit-meta">' +
+          "<h3>" + esc(m.degree) + " — Skyline " + PILL.open + "</h3>" +
+          '<div class="audit-facts">' +
+            "<span>Units required <b>" + m.unitsRequired + "</b></span>" +
+            "<span>Units applied <b>" + m.unitsApplied + "</b></span>" +
+            "<span>Catalog year <b>" + esc(m.catalogYear) + "</b></span>" +
+            "<span>Degree GPA <b>" + m.degreeGPA.toFixed(2) + "</b></span>" +
+          "</div>" +
+          '<div class="audit-date">Audit date ' + esc(m.auditDate) + " · " + esc(m.source) + "</div>" +
+        "</div>" +
+      "</div>" +
+
+      '<div class="card" style="margin-top:14px">' +
+        D.degreeReqs.map((r) =>
+          '<div class="dreq">' +
+            '<div class="c-icon">' + ICON[r.status] + "</div>" +
+            '<div class="dreq-name">' + esc(r.name) + "</div>" +
+            '<div class="dreq-need">' + (r.needed
+              ? (r.link ? '<a href="' + r.link + '">' + esc(r.needed) + "</a>" : esc(r.needed))
+              : "") + "</div>" +
+          "</div>").join("") +
+      "</div>";
+  }
+
+  /* ---------------- overview ---------------- */
 
   function renderOverview() {
     $("#ov-sub").textContent =
       D.meta.student + " · " + D.meta.college + " · " + D.meta.path +
-      " · targeting " + D.meta.targetTerm + ". Data current as of " + D.meta.asOf + ".";
+      " · targeting " + D.meta.targetTerm + ".";
 
     $("#ov-premise").innerHTML =
-      '<div class="alert info"><div class="ico">🎯</div><div>' +
-      "<h3>" + esc(D.premise.headline) + "</h3>" +
-      "<p>" + esc(D.premise.body) + "</p></div></div>";
+      '<div class="alert info"><div class="a-ico">&#127919;</div><div>' +
+      "<h3>" + esc(D.premise.headline) + "</h3><p>" + esc(D.premise.body) + "</p></div></div>";
 
-    const wrap = $("#ov-schools");
-    wrap.innerHTML = "";
+    const w = $("#ov-schools");
+    w.innerHTML = "";
     D.schools.forEach((s) => {
-      const c = el("div", "card school-card");
-      c.innerHTML =
+      w.appendChild(el("div", "card school-card",
         '<div class="sc-top"><div><h3>' + esc(s.name) + "</h3>" +
         '<div class="sc-major">' + esc(s.major) + "</div></div>" +
         '<span class="sc-tier tier-' + s.tier + '">' + esc(s.tierLabel) + "</span></div>" +
-        '<div style="font-size:12.5px;color:var(--ink-faint);margin-top:8px">' +
-        (s.deadline ? "⏱ Deadline " + esc(s.deadlineLabel) : "⏱ " + esc(s.deadlineLabel)) + "</div>" +
-        "<ul>" + s.notes.map((n) => "<li>" + esc(n) + "</li>").join("") + "</ul>";
-      wrap.appendChild(c);
+        '<div class="sc-dl">&#9201; ' + esc(s.deadline ? "Deadline " + s.deadlineLabel : s.deadlineLabel) + "</div>" +
+        "<ul>" + s.notes.map((n) => "<li>" + esc(n) + "</li>").join("") + "</ul>"));
     });
-
-    $("#ov-ap").innerHTML =
-      '<div class="alert"><div class="ico">⚠️</div><div style="flex:1">' +
-      "<h3>AP credit counts for Cal-GETC. It does not count for USC.</h3>" +
-      "<p>" + esc(D.apRule) + "</p>" +
-      '<p>This is the single most error-prone part of the plan. Anywhere a requirement is ' +
-      'satisfied by AP, it is marked <span class="badge b-ap">via AP</span> — meaning ' +
-      "Cal-GETC only, and still open for USC.</p>" +
-      '<div class="ap-chip-row">' +
-      D.apCredit.map((ap) =>
-        '<div class="ap-chip"><b>' + esc(ap.name) + "</b> → " + esc(ap.calgetcLabel) +
-        "<span>" + esc(ap.note) + "</span></div>").join("") +
-      "</div></div></div>";
   }
 
-  function renderOpen() {
-    const cg = computeCalGETC(false);
-    const usc = computeUSC(false);
-    const items = [];
+  /* ---------------- still open ---------------- */
 
-    D.uscge.categories.forEach((cat) => {
-      const r = usc[cat.id];
-      if (r.status !== "open") return;
-      const blockedByAP = D.apCredit.filter((ap) => ap.uscWouldBe === cat.id);
-      const cands = CANDIDATE_COURSES.filter((c) => (c.usc || []).indexOf(cat.id) !== -1);
-      items.push({
-        sev: "high",
-        mark: "●",
-        title: "USC GE-" + cat.id + " (" + cat.name + ") is open" +
-               (cat.needs > 1 ? " — needs " + cat.needs + " courses, has " + r.have : ""),
-        body: blockedByAP.length
-          ? blockedByAP[0].name + " satisfies the Cal-GETC equivalent but carries no USC GE credit, so this category is untouched."
-          : "No course currently assigned to this category.",
-        fix: cands.length
-          ? "Candidate" + (cands.length > 1 ? "s" : "") + ": " + cands.map((c) => c.code).join(" + ") + " (Summer 2027, unscheduled)"
-          : "No course planned. Needs one identified."
-      });
-    });
+  function renderOpen() {
+    const cg = computeCalGETC(false), usc = computeUSC(false);
+    const items = [];
 
     D.calgetc.areas.forEach((area) => {
       area.slots.forEach((slot) => {
         const r = cg.slots[slot.id];
         if (r.status !== "open") return;
         items.push({
-          sev: "high", mark: "●",
+          sev: "high",
           title: "Cal-GETC " + slot.name + " is unsatisfied",
           body: "Required for the Associate's degree and UC eligibility.",
-          fix: "No course assigned."
+          fix: slot.options ? "Any of: " + slot.options.slice(0, 6).join(", ") +
+               (slot.options.length > 6 ? " (+" + (slot.options.length - 6) + " more)" : "") : ""
         });
       });
     });
 
-    const su27 = ALL_TERMS.filter((t) => t.status === "candidate")[0];
-    if (su27) {
+    D.uscge.categories.forEach((cat) => {
+      const r = usc[cat.id];
+      if (r.status !== "open") return;
+      const cands = CANDIDATES.filter((c) => (c.usc || []).indexOf(cat.id) !== -1);
       items.push({
-        sev: "med", mark: "◐",
-        title: "Summer 2027 is undecided",
-        body: su27.verified,
-        fix: "Candidates under consideration: " + su27.courses.map((c) => c.code).join(", ") +
-             ". Use the What-If section to see what each closes."
+        sev: "high",
+        title: "USC GE-" + cat.id + " (" + cat.name + ") is open" +
+               (cat.needs > 1 ? " — needs " + cat.needs + ", has " + r.have : ""),
+        body: "No course on the plan is assigned to this category yet.",
+        fix: cands.length
+          ? "Candidate" + (cands.length > 1 ? "s" : "") + ": " + cands.map((c) => c.code).join(" + ") + " (Summer 2027, unscheduled)"
+          : "No course identified yet."
       });
+    });
+
+    if (D.major.stillNeeded) {
+      items.push({ sev: "high", title: "Major units short of the minimum",
+        body: D.major.unitsApplied + " of " + D.major.unitsRange + " units applied. " + D.major.stillNeeded,
+        fix: "Spring 2027 adds BUS. 100 (3) and STAT C1000 (4)." });
     }
 
-    CONFIRMED_COURSES.filter((c) => c.uscUnconfirmed).forEach((c) => {
-      const target = (c.usc || []).length ? "USC GE-" + c.usc.join("/") : "the USC Writing Requirement";
-      items.push({
-        sev: "med", mark: "◐",
-        title: c.code + " → " + target + " is unconfirmed",
+    const su27 = D.terms.filter((t) => t.status === "candidate")[0];
+    if (su27) items.push({ sev: "med", title: "Summer 2027 is undecided", body: su27.verified,
+      fix: "Candidates: " + su27.courses.map((c) => c.code).join(", ") + ". Use What-If to see what each closes." });
+
+    CONFIRMED.filter((c) => c.uscUnconfirmed).forEach((c) => {
+      items.push({ sev: "med",
+        title: c.code + " → " + ((c.usc || []).length ? "USC GE-" + c.usc.join("/") : "the USC Writing Requirement") + " is unconfirmed",
         body: c.note,
-        fix: "Confirm directly with Lucy Jordan (lucyjord@usc.edu) or busadm@marshall.usc.edu."
-      });
+        fix: "Confirm with Lucy Jordan (lucyjord@usc.edu) or busadm@marshall.usc.edu." });
     });
 
-    (D.majorPrepSchoolNotes.usc || []).filter((n) => n.status === "todo").forEach((n) => {
-      items.push({ sev: "med", mark: "◐", title: n.text, body: "USC Marshall application requirement.", fix: "" });
-    });
+    (D.majorPrepSchoolNotes.usc || []).filter((n) => n.status === "todo").forEach((n) =>
+      items.push({ sev: "med", title: n.text, body: "USC Marshall application requirement.", fix: "" }));
 
-    const elective = CONFIRMED_COURSES.filter((c) => c.flag === "elective");
-    elective.forEach((c) => {
-      items.push({
-        sev: "low", mark: "○",
-        title: c.code + " (" + c.units + " units) fulfills nothing",
-        body: c.note,
-        fix: "No action — already registered. Worth knowing it's " + c.units + " units of pure elective."
-      });
-    });
+    const fa = D.terms.filter((t) => t.id === "fa26")[0];
+    if (fa) items.push({ sev: "low", title: "One Fall 2026 class is unaccounted for",
+      body: fa.verified, fix: "Check the in-progress block in DegreeWorks." });
 
-    const wrap = $("#open-list");
-    wrap.innerHTML = "";
-    if (!items.length) {
-      wrap.innerHTML = '<p style="margin:0;color:var(--teal)">Nothing open. Everything is assigned.</p>';
-      return;
-    }
-    const order = { high: 0, med: 1, low: 2 };
-    items.sort((a, b) => order[a.sev] - order[b.sev]);
-    items.forEach((it) => {
-      wrap.appendChild(el("div", "open-item sev-" + it.sev,
-        '<span class="oi-mark">' + it.mark + "</span><div>" +
-        "<h4>" + esc(it.title) + "</h4>" +
-        "<p>" + esc(it.body) + "</p>" +
-        (it.fix ? '<div class="oi-fix">→ ' + esc(it.fix) + "</div>" : "") +
-        "</div>"));
-    });
+    CONFIRMED.filter((c) => c.flag === "elective").forEach((c) =>
+      items.push({ sev: "low", title: c.code + " (" + c.units + " units) fulfills nothing",
+        body: c.note, fix: "No action — already registered." }));
+
+    const w = $("#open-list");
+    w.innerHTML = "";
+    const ord = { high: 0, med: 1, low: 2 };
+    items.sort((a, b) => ord[a.sev] - ord[b.sev]);
+    const mark = { high: "&#9679;", med: "&#9681;", low: "&#9675;" };
+    items.forEach((it) => w.appendChild(el("div", "open-item sev-" + it.sev,
+      '<span class="oi-mark">' + mark[it.sev] + "</span><div>" +
+      "<h4>" + esc(it.title) + "</h4><p>" + esc(it.body) + "</p>" +
+      (it.fix ? '<div class="oi-fix">&rarr; ' + esc(it.fix) + "</div>" : "") + "</div>")));
   }
 
-  function courseBadges(c) {
+  /* ---------------- schedule ---------------- */
+
+  function badges(c) {
     const out = [];
-    (c.calgetc || []).forEach((s) => out.push('<span class="badge b-course">Cal-GETC ' + esc(s) + "</span>"));
-    (c.usc || []).forEach((u) => out.push(
-      '<span class="badge ' + (c.uscUnconfirmed ? "b-unconf" : "b-course") + '">USC GE-' + esc(u) +
-      (c.uscUnconfirmed ? " ?" : "") + "</span>"));
+    (c.calgetc || []).forEach((s) => out.push('<span class="badge b-cg">Cal-GETC ' + esc(s) + "</span>"));
+    (c.usc || []).forEach((u) => out.push('<span class="badge ' + (c.uscUnconfirmed ? "b-unconf" : "b-usc") +
+      '">USC GE-' + esc(u) + (c.uscUnconfirmed ? " ?" : "") + "</span>"));
     if (c.uscWriting) out.push('<span class="badge b-unconf">USC Writing ?</span>');
-    if ((c.majorPrep || []).length) out.push('<span class="badge b-progress">Major prep</span>');
-    if (c.berkeleyPrereq) out.push('<span class="badge b-progress">Haas prereq</span>');
-    if (c.flag === "elective") out.push('<span class="badge b-elective">Pure elective</span>');
-    if (c.status === "candidate") out.push('<span class="badge b-whatif">Candidate only</span>');
-    if (!out.length) out.push('<span class="badge b-elective">No requirement credit</span>');
+    if ((c.majorPrep || []).length) out.push('<span class="badge b-major">Major core</span>');
+    if (c.berkeleyPrereq) out.push('<span class="badge b-major">Haas prereq</span>');
+    if (c.viaExam) out.push('<span class="badge b-exam">' + esc(c.viaExam) + "</span>");
+    if (c.flag === "elective") out.push('<span class="badge b-none">Elective only</span>');
+    if (c.status === "candidate") out.push('<span class="badge b-what">Candidate</span>');
+    if (!out.length) out.push('<span class="badge b-none">No requirement credit</span>');
     return out.join("");
   }
 
   function renderTerms() {
-    const wrap = $("#terms-list");
-    wrap.innerHTML = "";
-    ALL_TERMS.forEach((term) => {
-      const units = term.courses.reduce((a, c) => a + (c.units || 0), 0);
-      const card = el("div", "card term" + (term.scratchpad ? " scratch" : ""));
+    const w = $("#terms-list");
+    w.innerHTML = "";
+    D.terms.forEach((t) => {
+      const units = t.courses.reduce((a, c) => a + (c.units || 0), 0);
+      const card = el("div", "card block" + (t.scratchpad ? " scratch" : ""));
+      const st = t.status === "completed" ? "complete" : t.status === "candidate" ? "whatif" : t.status;
+      card.appendChild(el("div", "block-head",
+        "<h3>" + esc(t.name) + "</h3>" + PILL[st] +
+        '<span class="block-units">Units applied: ' + units + (t.courses.some((c) => c.unitsAssumed) ? " *" : "") + "</span>"));
 
-      const badge = term.status === "completed" ? "b-course"
-                  : term.status === "in-progress" ? "b-progress"
-                  : term.status === "planned" ? "b-planned" : "b-whatif";
-
-      card.appendChild(el("div", "term-head",
-        "<h3>" + esc(term.name) + "</h3>" +
-        '<span class="badge ' + badge + '">' + esc(term.statusLabel) + "</span>" +
-        '<span class="term-units">' + units + " units" +
-        (term.courses.some((c) => c.unitsAssumed) ? " *" : "") + "</span>"));
-
-      term.courses.forEach((c) => {
-        const row = el("div", "course" + (c.flag === "elective" ? " elective" : ""));
-        row.innerHTML =
-          '<span class="course-dot ' + c.status + '"></span>' +
+      t.courses.forEach((c) => {
+        card.appendChild(el("div", "course" + (c.flag === "elective" ? " elective" : ""),
+          '<div class="c-icon">' + (ICON[c.status === "completed" ? "complete" : c.status] || ICON.open) + "</div>" +
           '<div class="course-main">' +
-            '<div class="course-code">' + esc(c.code) + "</div>" +
-            '<div class="course-title">' + esc(c.title) + "</div>" +
+            '<div class="course-code">' + esc(c.code) + ' <span class="course-title">' + esc(c.title) + "</span></div>" +
             (c.note ? '<div class="course-note">' + esc(c.note) + "</div>" : "") +
-            '<div class="course-badges">' + courseBadges(c) + "</div>" +
+            '<div class="course-badges">' + badges(c) + "</div>" +
           "</div>" +
-          '<div class="course-units">' + (c.units || 0) +
-            (c.unitsAssumed ? '<span class="assumed" title="Unit count not stated in the source brief — confirm in DegreeWorks">*</span>' : "") +
-            " u" +
-            (c.grade ? '<div class="course-grade">' + esc(c.grade) + "</div>" : "") +
-          "</div>";
-        card.appendChild(row);
+          '<div class="course-right">' +
+            (gradeOf(c) ? '<span class="cg-grade">' + esc(gradeOf(c)) + "</span>" : "") +
+            '<span class="cg-units">' + (c.units || 0) + (c.unitsAssumed ? "*" : "") + " u</span>" +
+          "</div>"));
       });
 
-      if (term.verified) card.appendChild(el("p", "term-note", esc(term.verified)));
-      if (term.unitsNote) card.appendChild(el("p", "term-note", "* " + esc(term.unitsNote)));
-      wrap.appendChild(card);
+      if (t.verified) card.appendChild(el("p", "block-note", esc(t.verified)));
+      w.appendChild(card);
     });
   }
+
+  /* ---------------- Cal-GETC ---------------- */
 
   function renderCalGETC() {
     $("#cg-title").textContent = D.calgetc.label;
-    $("#cg-sub").textContent = D.calgetc.sublabel + " Areas marked via AP are complete for Cal-GETC only.";
+    $("#cg-sub").textContent = D.calgetc.sublabel + ".";
 
     const cg = computeCalGETC(false);
-    const wrap = $("#cg-list");
-    wrap.innerHTML = "";
+    const w = $("#cg-list");
+    w.innerHTML = "";
 
     D.calgetc.areas.forEach((area) => {
-      const box = el("div", "req-area");
       const a = cg.areas[area.id];
-      const fakeR = { status: a.status, allAP: a.viaAP && a.status === "complete", viaAP: a.viaAP, have: 1, needs: 1 };
-
-      box.appendChild(el("div", "req-area-head",
-        "<h4>Area " + esc(area.id) + " — " + esc(area.name) + "</h4>" +
-        '<span class="spacer"></span>' +
-        '<span class="badge ' + badgeClass(fakeR) + '">' + esc(cgLabel(fakeR)) + "</span>"));
+      const card = el("div", "card block");
+      card.appendChild(el("div", "block-head",
+        "<h3>Area " + esc(area.id) + " — " + esc(area.name) + "</h3>" + PILL[a.status] +
+        '<span class="block-units">Units applied: ' + a.units + "</span>"));
+      if (area.rule) card.appendChild(el("p", "block-rule", esc(area.rule)));
 
       area.slots.forEach((slot) => {
         const r = cg.slots[slot.id];
-        const s = el("div", slotClass(r));
-        s.innerHTML =
-          '<div class="slot-name">' + esc(slot.name) +
-            (r.needs > 1 ? ' <span style="color:var(--ink-faint);font-size:12px">(' + r.needs + " courses)</span>" : "") +
-          "</div>" +
-          '<span class="badge ' + badgeClass(r) + '">' + esc(cgLabel(r)) + "</span>" +
-          '<div class="slot-by">' + sourceText(r) + "</div>";
-        box.appendChild(s);
+        const row = el("div", "slot s-" + r.status);
+        let html =
+          '<div class="slot-head">' +
+            '<div class="c-icon">' + ICON[r.status] + "</div>" +
+            '<div class="slot-name">' + esc(slot.name) +
+              (r.needs > 1 ? ' <span class="slot-n">(' + r.needs + " courses)</span>" : "") + "</div>" +
+            '<span class="slot-state">' + esc(label(r, "cg")) + "</span>" +
+          "</div>";
+        if (r.counted.length) {
+          html += r.counted.map((s) => courseRow(s.course)).join("");
+        }
+        if (r.status === "open") {
+          html += stillNeeded(r.needs > 1 ? (r.needs - r.have) + " more course(s)" : "1 course", slot.options);
+        }
+        row.innerHTML = html;
+        card.appendChild(row);
       });
 
-      wrap.appendChild(box);
+      w.appendChild(card);
     });
-
-    wrap.appendChild(el("div", "legend",
-      '<span class="badge b-course">Complete via course — counts everywhere</span>' +
-      '<span class="badge b-ap">Complete via AP — Cal-GETC only</span>' +
-      '<span class="badge b-progress">In progress</span>' +
-      '<span class="badge b-planned">Planned</span>' +
-      '<span class="badge b-open">Incomplete</span>'));
   }
+
+  /* ---------------- USC GE ---------------- */
 
   function renderUSC() {
     $("#usc-title").textContent = D.uscge.label;
     $("#usc-sub").textContent = D.uscge.sublabel + ".";
 
     $("#usc-residency").innerHTML =
-      '<div class="alert info"><div class="ico">ℹ️</div><div>' +
-      "<h3>Open categories at transfer are normal</h3>" +
-      "<p>" + esc(D.uscge.residencyNote) + "</p></div></div>";
+      '<div class="alert info"><div class="a-ico">&#8505;</div><div>' +
+      "<h3>Open categories at transfer are normal</h3><p>" + esc(D.uscge.residencyNote) + "</p></div></div>";
 
     const usc = computeUSC(false);
-    const wrap = $("#usc-list");
-    wrap.innerHTML = "";
+    const w = $("#usc-list");
+    w.innerHTML = "";
 
     D.uscge.categories.forEach((cat) => {
       const r = usc[cat.id];
-      const cls = r.status === "open" ? "open" : (r.status === "whatif" ? "whatif" : "done");
-      const box = el("div", slotClass(r) + " usc-cat " + cls);
-      box.style.gridTemplateColumns = "auto 1fr auto";
-      box.innerHTML =
-        '<span class="usc-letter">' + esc(cat.id) + "</span>" +
-        '<div class="slot-name">' + esc(cat.name) +
-          (cat.needs > 1 ? ' <span style="color:var(--ink-faint);font-size:12px">(' + cat.needs + " courses)</span>" : "") +
-        "</div>" +
-        '<span class="badge ' + badgeClass(r) + '">' + esc(uscLabel(r)) + "</span>" +
-        '<div class="slot-by" style="grid-column:2/4">' + sourceText(r) + "</div>";
-      wrap.appendChild(box);
+      const row = el("div", "slot usc-cat s-" + r.status);
+      let html =
+        '<div class="slot-head">' +
+          '<span class="usc-letter">' + esc(cat.id) + "</span>" +
+          '<div class="slot-name">' + esc(cat.name) +
+            (cat.needs > 1 ? ' <span class="slot-n">(' + cat.needs + " courses)</span>" : "") + "</div>" +
+          '<span class="slot-state">' + esc(label(r, "usc")) + "</span>" +
+        "</div>";
+      if (r.counted.length) html += r.counted.map((s) => courseRow(s.course)).join("");
+      if (r.status === "open") {
+        const cands = CANDIDATES.filter((c) => (c.usc || []).indexOf(cat.id) !== -1);
+        html += stillNeeded((cat.needs - r.have) + " course" + (cat.needs - r.have > 1 ? "s" : ""),
+                            cands.map((c) => c.code));
+      }
+      row.innerHTML = html;
+      w.appendChild(row);
     });
 
     const done = D.uscge.categories.filter((c) => usc[c.id].status !== "open").length;
-    wrap.appendChild(el("div", "", 
-      '<div style="margin-top:14px;font-size:13px;color:var(--ink-dim)">' +
-      done + " of " + D.uscge.categories.length + " categories covered or on track by Spring 2027." +
-      '</div><div class="progress-line partial"><i style="width:' +
-      Math.round((done / D.uscge.categories.length) * 100) + '%"></i></div>'));
+    w.appendChild(el("div", "", '<div class="prog-cap">' + done + " of " + D.uscge.categories.length +
+      " categories covered or on track by Spring 2027.</div>" +
+      '<div class="progress-line"><i style="width:' + Math.round(done / D.uscge.categories.length * 100) + '%"></i></div>'));
   }
 
-  function renderMajorPrep() {
+  /* ---------------- major ---------------- */
+
+  function renderMajor() {
     $("#mp-sub").textContent = D.majorPrepNote;
-    const wrap = $("#mp-list");
-    wrap.innerHTML = "";
 
-    const MARK = { done: "✓", todo: "○", blocked: "✕", info: "ℹ", deadline: "⏱" };
+    const m = D.major;
+    const core = $("#mp-core");
+    const card = el("div", "card block");
+    card.appendChild(el("div", "block-head",
+      "<h3>" + esc(m.name) + "</h3>" + PILL.open +
+      '<span class="block-units">Units applied: ' + m.unitsApplied + " of " + esc(m.unitsRange) + "</span>"));
+    card.appendChild(el("div", "needed-top",
+      '<span class="n-lab">Still needed:</span> <span class="n-body">' + esc(m.stillNeeded) + "</span>"));
 
+    m.core.forEach((req) => {
+      const c = byId[req.courseId];
+      if (!c) return;
+      const done = c.status === "completed";
+      const row = el("div", "slot s-" + (done ? "complete" : c.status === "in-progress" ? "in-progress" : "planned"));
+      let html =
+        '<div class="slot-head">' +
+          '<div class="c-icon">' + ICON[done ? "complete" : c.status] + "</div>" +
+          '<div class="slot-name">' + esc(req.name) + "</div>" +
+          '<span class="slot-state">' + (done ? "Complete" : c.status === "in-progress" ? "In progress" : "Registered") + "</span>" +
+        "</div>" + courseRow(c);
+      if (!done && req.options) {
+        html += '<div class="needed"><span class="n-lab neutral">Satisfied by:</span><span class="n-body">' +
+          '<span class="opts">' + req.options.map((o) => "<code>" + esc(o) + "</code>").join("<i>or</i>") + "</span></span></div>";
+      }
+      row.innerHTML = html;
+      card.appendChild(row);
+    });
+    core.innerHTML = "";
+    core.appendChild(card);
+
+    const MARK = { done: "&#10003;", todo: "&#9675;", blocked: "&#10005;", info: "&#8505;", deadline: "&#9201;" };
+    const w = $("#mp-list");
+    w.innerHTML = "";
     D.schools.forEach((s) => {
-      const courses = CONFIRMED_COURSES.filter((c) => (c.majorPrep || []).indexOf(s.id) !== -1);
+      const courses = CONFIRMED.filter((c) => (c.majorPrep || []).indexOf(s.id) !== -1);
       const units = courses.reduce((a, c) => a + (c.units || 0), 0);
       const notes = D.majorPrepSchoolNotes[s.id] || [];
-
-      const card = el("div", "card school-card");
-      card.innerHTML =
+      w.appendChild(el("div", "card school-card",
         '<div class="sc-top"><div><h3>' + esc(s.name) + "</h3>" +
         '<div class="sc-major">' + esc(s.major) + "</div></div>" +
         '<span class="sc-tier tier-' + s.tier + '">' + esc(s.tierLabel) + "</span></div>" +
-
-        '<div style="margin-top:14px;font-size:12px;color:var(--ink-faint);letter-spacing:.06em;text-transform:uppercase">' +
-        "Major prep courses · " + units + " units</div>" +
-
+        '<div class="sc-sub">Major-prep courses on the plan · ' + units + " units</div>" +
         courses.map((c) =>
-          '<div style="display:flex;gap:9px;align-items:baseline;font-size:13px;padding:7px 0;border-bottom:1px solid rgba(29,74,99,.3)">' +
-          '<span class="course-dot ' + c.status + '" style="margin-top:5px"></span>' +
-          "<span><b>" + esc(c.code) + "</b> <span style='color:var(--ink-faint)'>" + esc(c.title) + "</span>" +
-          "<br><span style='color:var(--ink-faint);font-size:11.5px'>" + esc(c.termName) + " · " + c.units + " units" +
-          (c.grade ? " · grade " + esc(c.grade) : "") + "</span></span></div>").join("") +
-
+          '<div class="mini">' + ICON[c.status === "completed" ? "complete" : c.status] +
+          "<span><b>" + esc(c.code) + "</b> " + esc(c.title) +
+          "<br><small>" + esc(c.termName) + " · " + c.units + " units" +
+          (gradeOf(c) ? " · grade " + esc(gradeOf(c)) : "") + "</small></span></div>").join("") +
         '<ul class="prep-check">' + notes.map((n) =>
-          '<li class="pc-' + n.status + '"><span class="pc-mark">' + (MARK[n.status] || "○") +
-          "</span><span>" + esc(n.text) + "</span></li>").join("") + "</ul>";
-
-      wrap.appendChild(card);
+          '<li class="pc-' + n.status + '"><span class="pc-mark">' + (MARK[n.status] || "&#9675;") +
+          "</span><span>" + esc(n.text) + "</span></li>").join("") + "</ul>"));
     });
   }
 
   /* ---------------- GPA ---------------- */
 
-  const GRADES = [
-    ["", null], ["A", 4.0], ["A-", 3.7], ["B+", 3.3], ["B", 3.0], ["B-", 2.7],
-    ["C+", 2.3], ["C", 2.0], ["C-", 1.7], ["D+", 1.3], ["D", 1.0], ["D-", 0.7], ["F", 0.0]
-  ];
-  const gradePoints = (g) => {
-    const hit = GRADES.filter((x) => x[0] === g)[0];
-    return hit ? hit[1] : null;
-  };
-  const gradeOf = (c) => (state.grades[c.id] !== undefined ? state.grades[c.id] : (c.grade || ""));
+  const GRADES = [["", null], ["A", 4.0], ["A-", 3.7], ["B+", 3.3], ["B", 3.0], ["B-", 2.7],
+    ["C+", 2.3], ["C", 2.0], ["C-", 1.7], ["D+", 1.3], ["D", 1.0], ["D-", 0.7], ["F", 0.0], ["CRE", null]];
+  const points = (g) => { const h = GRADES.filter((x) => x[0] === g)[0]; return h ? h[1] : null; };
+  function gradeOf(c) { return state.grades[c.id] !== undefined ? state.grades[c.id] : (c.grade || ""); }
 
   function gpaFor(courses) {
     let pts = 0, units = 0;
     courses.forEach((c) => {
-      const gp = gradePoints(gradeOf(c));
-      if (gp === null || !c.units) return;
-      pts += gp * c.units;
-      units += c.units;
+      const p = points(gradeOf(c));
+      if (p === null || !c.units) return;
+      pts += p * c.units; units += c.units;
     });
     return { pts: pts, units: units, gpa: units ? pts / units : null };
   }
 
   function renderGPA() {
-    const graded = gpaFor(CONFIRMED_COURSES);
-    const priorPts = state.priorUnits * state.priorGPA;
-    const cumUnits = graded.units + state.priorUnits;
-    const cumGPA = cumUnits ? (graded.pts + priorPts) / cumUnits : null;
-    const planUnits = CONFIRMED_COURSES.reduce((a, c) => a + (c.units || 0), 0);
+    const all = gpaFor(CONFIRMED);
+    const planUnits = CONFIRMED.reduce((a, c) => a + (c.units || 0), 0);
 
     $("#gpa-tiles").innerHTML =
-      '<div class="card gpa-tile"><div class="num">' + D.meta.cumulativeGPA.toFixed(2) + "</div>" +
-      '<div class="lbl">GPA ON RECORD</div><div class="sub">' + esc(D.meta.gpaSource) + " · " + esc(D.meta.asOf) + "</div></div>" +
+      '<div class="card gpa-tile"><div class="num">' + D.meta.degreeGPA.toFixed(2) + "</div>" +
+      '<div class="lbl">DEGREE GPA ON RECORD</div><div class="sub">' + esc(D.meta.source) + " · " + esc(D.meta.auditDate) + "</div></div>" +
 
-      '<div class="card gpa-tile"><div class="num' + (cumGPA === null ? " muted" : "") + '">' +
-      (cumGPA === null ? "—" : cumGPA.toFixed(2)) + "</div>" +
-      '<div class="lbl">COMPUTED CUMULATIVE</div><div class="sub">from ' + cumUnits + " graded units</div></div>" +
+      '<div class="card gpa-tile"><div class="num' + (all.gpa === null ? " muted" : "") + '">' +
+      (all.gpa === null ? "—" : all.gpa.toFixed(2)) + "</div>" +
+      '<div class="lbl">COMPUTED FROM GRADES</div><div class="sub">' + all.units + " graded units</div></div>" +
 
-      '<div class="card gpa-tile"><div class="num' + (graded.units ? "" : " muted") + '">' +
-      graded.units + "</div>" +
-      '<div class="lbl">GRADED UNITS</div><div class="sub">of ' + planUnits + " in plan</div></div>";
+      '<div class="card gpa-tile"><div class="num">' + all.units + "</div>" +
+      '<div class="lbl">GRADED UNITS</div><div class="sub">of ' + planUnits + " on the plan</div></div>";
 
-    const wrap = $("#gpa-terms");
-    wrap.innerHTML = "";
-
-    ALL_TERMS.filter((t) => t.status !== "candidate").forEach((term) => {
-      const tg = gpaFor(term.courses);
+    const w = $("#gpa-terms");
+    w.innerHTML = "";
+    D.terms.filter((t) => t.status !== "candidate").forEach((t) => {
+      const tg = gpaFor(t.courses);
       const box = el("div", "gpa-term");
-      box.appendChild(el("h4", "",
-        esc(term.name) +
-        '<span class="badge ' + (term.status === "completed" ? "b-course" : term.status === "in-progress" ? "b-progress" : "b-planned") +
-        '">' + esc(term.statusLabel) + "</span>" +
+      box.appendChild(el("h4", "", esc(t.name) +
         '<span class="tgpa' + (tg.gpa === null ? " none" : "") + '">' +
-        (tg.gpa === null ? "no grades yet" : "term GPA " + tg.gpa.toFixed(2)) + "</span>"));
+        (tg.gpa === null ? "no graded units" : "term GPA " + tg.gpa.toFixed(2)) + "</span>"));
 
-      term.courses.forEach((c) => {
-        const row = el("div", "gpa-row");
-        row.innerHTML =
+      t.courses.forEach((c) => {
+        const row = el("div", "gpa-row",
           '<div class="gr-code"><b>' + esc(c.code) + "</b><small>" + esc(c.title) + "</small></div>" +
-          '<div class="gr-units">' + (c.units || 0) + " u</div>";
+          '<div class="gr-units">' + (c.units || 0) + " u</div>");
         const sel = el("select");
         sel.setAttribute("aria-label", "Grade for " + c.code);
         GRADES.forEach(([g]) => {
-          const o = el("option");
-          o.value = g;
-          o.textContent = g === "" ? "—" : g;
-          sel.appendChild(o);
+          const o = el("option"); o.value = g; o.textContent = g === "" ? "—" : g; sel.appendChild(o);
         });
         sel.value = gradeOf(c);
         sel.addEventListener("change", function () {
-          state.grades[c.id] = sel.value;
-          save();
-          renderGPA();
+          state.grades[c.id] = sel.value; save(); renderGPA(); renderTerms(); renderMajor();
         });
         row.appendChild(sel);
         box.appendChild(row);
       });
-
-      wrap.appendChild(box);
+      w.appendChild(box);
     });
 
-    const prior = el("div", "prior-row");
-    prior.innerHTML =
-      "<div><label for='pu'>Prior graded units</label>" +
-      "<input type='number' id='pu' min='0' step='0.5' value='" + state.priorUnits + "' style='width:110px'></div>" +
-      "<div><label for='pg'>Prior GPA</label>" +
-      "<input type='number' id='pg' min='0' max='4' step='0.01' value='" + state.priorGPA + "' style='width:110px'></div>" +
-      "<p style='margin:0;flex:1 1 260px;font-size:12px;color:var(--ink-faint)'>" +
-      "The computed cumulative only reflects grades entered above. If DegreeWorks shows " +
-      D.meta.cumulativeGPA.toFixed(2) + " over more coursework than is listed here, enter that prior " +
-      "record to reconcile the two numbers.</p>";
-    wrap.appendChild(prior);
-
-    prior.querySelector("#pu").addEventListener("input", function (e) {
-      state.priorUnits = Number(e.target.value) || 0; save(); renderGPA();
-    });
-    prior.querySelector("#pg").addEventListener("input", function (e) {
-      state.priorGPA = Number(e.target.value) || 0; save(); renderGPA();
-    });
+    w.appendChild(el("p", "block-note",
+      "CRE (credit) grades carry units but no grade points, so they don't move the GPA."));
   }
 
-  /* ---------------- What-If ---------------- */
+  /* ---------------- what-if ---------------- */
 
   function renderWhatIf() {
     const base = { cg: computeCalGETC(false), usc: computeUSC(false) };
     const scen = { cg: computeCalGETC(true), usc: computeUSC(true) };
+    const n = CANDIDATES.filter((c) => state.whatIf[c.id]).length + state.custom.length;
 
-    const activeCount = CANDIDATE_COURSES.filter((c) => state.whatIf[c.id]).length + state.custom.length;
+    $("#wi-banner").innerHTML = "<p>" + (n
+      ? "<b>Scenario active</b> — " + n + " hypothetical course" + (n > 1 ? "s" : "") +
+        " applied. The trackers above still show the <b>confirmed</b> plan only."
+      : "<b>No scenario active.</b> Toggle a candidate below to see its effect.") + "</p>";
 
-    $("#wi-banner").innerHTML =
-      "<p>" + (activeCount
-        ? "<b>Scenario active</b> — " + activeCount + " hypothetical course" + (activeCount > 1 ? "s" : "") +
-          " applied. The trackers above still show the <b>confirmed</b> plan only."
-        : "<b>No scenario active.</b> Toggle a candidate below to see its effect.") + "</p>";
-
-    // toggles
     const tw = $("#wi-toggles");
     tw.innerHTML = "";
-    CANDIDATE_COURSES.forEach((c) => {
+    CANDIDATES.forEach((c) => {
       const on = !!state.whatIf[c.id];
-      const row = el("label", "toggle-row" + (on ? " on" : ""));
-      row.innerHTML =
+      const row = el("label", "toggle-row" + (on ? " on" : ""),
         '<input type="checkbox"' + (on ? " checked" : "") + ">" +
         '<div style="flex:1"><div class="tr-code">' + esc(c.code) + " · " + esc(c.title) + "</div>" +
         '<div class="tr-note">' + esc(c.note) + "</div>" +
-        '<div class="tr-badges">' + courseBadges(c) + "</div></div>";
+        '<div class="tr-badges">' + badges(c) + "</div></div>");
       row.querySelector("input").addEventListener("change", function (e) {
-        state.whatIf[c.id] = e.target.checked;
-        save();
-        renderWhatIf();
+        state.whatIf[c.id] = e.target.checked; save(); renderWhatIf();
       });
       tw.appendChild(row);
     });
 
-    // custom list
     const cl = $("#cc-list");
     cl.innerHTML = "";
     state.custom.forEach((c) => {
-      const item = el("div", "custom-item");
-      item.innerHTML =
-        "<b>" + esc(c.code) + "</b> <span style='color:var(--ink-faint)'>" + c.units + " u</span>" +
-        '<span style="display:flex;gap:5px;flex-wrap:wrap">' +
-        (c.calgetc || []).map((x) => '<span class="badge b-whatif">Cal-GETC ' + esc(x) + "</span>").join("") +
-        (c.usc || []).map((x) => '<span class="badge b-whatif">USC GE-' + esc(x) + "</span>").join("") +
-        "</span>" +
-        '<button class="ci-x" type="button" aria-label="Remove ' + esc(c.code) + '">×</button>';
+      const item = el("div", "custom-item",
+        "<b>" + esc(c.code) + "</b> <span class='dim'>" + c.units + " u</span>" +
+        '<span class="ci-badges">' +
+        (c.calgetc || []).map((x) => '<span class="badge b-what">Cal-GETC ' + esc(x) + "</span>").join("") +
+        (c.usc || []).map((x) => '<span class="badge b-what">USC GE-' + esc(x) + "</span>").join("") + "</span>" +
+        '<button class="ci-x" type="button" aria-label="Remove ' + esc(c.code) + '">&times;</button>');
       item.querySelector(".ci-x").addEventListener("click", function () {
-        state.custom = state.custom.filter((x) => x.id !== c.id);
-        save();
-        renderWhatIf();
+        state.custom = state.custom.filter((x) => x.id !== c.id); save(); renderWhatIf();
       });
       cl.appendChild(item);
     });
 
-    // deltas
     const deltas = [];
-    D.calgetc.areas.forEach((area) => {
-      area.slots.forEach((slot) => {
-        const b = base.cg.slots[slot.id], s = scen.cg.slots[slot.id];
-        if (cgLabel(b) !== cgLabel(s)) {
-          deltas.push({ what: "Cal-GETC " + slot.name, from: cgLabel(b), to: cgLabel(s) });
-        }
-      });
-    });
+    D.calgetc.areas.forEach((area) => area.slots.forEach((slot) => {
+      const b = base.cg.slots[slot.id], s = scen.cg.slots[slot.id];
+      if (label(b, "cg") !== label(s, "cg")) deltas.push({ what: "Cal-GETC " + slot.name, from: label(b, "cg"), to: label(s, "cg") });
+    }));
     D.uscge.categories.forEach((cat) => {
       const b = base.usc[cat.id], s = scen.usc[cat.id];
-      if (uscLabel(b) !== uscLabel(s)) {
-        deltas.push({ what: "USC GE-" + cat.id + " (" + cat.name + ")", from: uscLabel(b), to: uscLabel(s) });
-      }
+      if (label(b, "usc") !== label(s, "usc")) deltas.push({ what: "USC GE-" + cat.id + " (" + cat.name + ")", from: label(b, "usc"), to: label(s, "usc") });
     });
 
     const dw = $("#wi-deltas");
     dw.innerHTML = "";
     if (!deltas.length) {
-      dw.innerHTML = '<p class="delta-empty">' +
-        (activeCount ? "No requirement status changes from this scenario." : "Nothing selected.") + "</p>";
+      dw.innerHTML = '<p class="delta-empty">' + (n ? "No requirement status changes from this scenario." : "Nothing selected.") + "</p>";
     } else {
-      deltas.forEach((d) => {
-        dw.appendChild(el("div", "delta",
-          '<span class="d-arrow">→</span><div><b>' + esc(d.what) + "</b><br>" +
-          '<span class="d-from">' + esc(d.from) + '</span> <span style="color:var(--ink-faint)">→</span> ' +
-          '<span class="d-to">' + esc(d.to) + "</span></div>"));
-      });
-      const openBefore = D.uscge.categories.filter((c) => base.usc[c.id].status === "open").length;
-      const openAfter = D.uscge.categories.filter((c) => scen.usc[c.id].status === "open").length;
-      if (openBefore !== openAfter) {
-        dw.appendChild(el("div", "delta",
-          '<span class="d-arrow">Σ</span><div><b>USC GE categories still open</b><br>' +
-          '<span class="d-from">' + openBefore + '</span> <span style="color:var(--ink-faint)">→</span> ' +
-          '<span class="d-to">' + openAfter + "</span></div>"));
-      }
+      deltas.forEach((d) => dw.appendChild(el("div", "delta",
+        '<span class="d-arrow">&rarr;</span><div><b>' + esc(d.what) + "</b><br>" +
+        '<span class="d-from">' + esc(d.from) + '</span> &rarr; <span class="d-to">' + esc(d.to) + "</span></div>")));
+      const ob = D.uscge.categories.filter((c) => base.usc[c.id].status === "open").length;
+      const oa = D.uscge.categories.filter((c) => scen.usc[c.id].status === "open").length;
+      if (ob !== oa) dw.appendChild(el("div", "delta",
+        '<span class="d-arrow">&Sigma;</span><div><b>USC GE categories still open</b><br>' +
+        '<span class="d-from">' + ob + '</span> &rarr; <span class="d-to">' + oa + "</span></div>"));
     }
   }
 
-  function initWhatIfControls() {
-    // chip pickers
-    const cgWrap = $("#cc-calgetc");
-    D.calgetc.areas.forEach((area) => {
-      area.slots.forEach((slot) => {
-        const l = el("label", "", '<input type="checkbox" value="' + slot.id + '">' + esc(slot.id));
-        cgWrap.appendChild(l);
-      });
-    });
-    const uWrap = $("#cc-usc");
-    D.uscge.categories.forEach((cat) => {
-      uWrap.appendChild(el("label", "", '<input type="checkbox" value="' + cat.id + '">' + esc(cat.id)));
-    });
+  function initWhatIf() {
+    const cgw = $("#cc-calgetc"), uw = $("#cc-usc");
+    D.calgetc.areas.forEach((a) => a.slots.forEach((s) =>
+      cgw.appendChild(el("label", "", '<input type="checkbox" value="' + s.id + '">' + esc(s.id)))));
+    D.uscge.categories.forEach((c) =>
+      uw.appendChild(el("label", "", '<input type="checkbox" value="' + c.id + '">' + esc(c.id))));
 
     $("#cc-add").addEventListener("click", function () {
       const code = $("#cc-code").value.trim();
       if (!code) { $("#cc-code").focus(); return; }
-      const units = Number($("#cc-units").value) || 0;
-      const cg = Array.prototype.slice.call(cgWrap.querySelectorAll("input:checked")).map((i) => i.value);
-      const us = Array.prototype.slice.call(uWrap.querySelectorAll("input:checked")).map((i) => i.value);
       state.custom.push({
-        id: "custom-" + Date.now(),
-        code: code, title: "Hypothetical", units: units,
-        calgetc: cg, usc: us, majorPrep: []
+        id: "custom-" + Date.now(), code: code, title: "Hypothetical",
+        units: Number($("#cc-units").value) || 0,
+        calgetc: Array.prototype.slice.call(cgw.querySelectorAll("input:checked")).map((i) => i.value),
+        usc: Array.prototype.slice.call(uw.querySelectorAll("input:checked")).map((i) => i.value),
+        majorPrep: []
       });
       save();
       $("#cc-code").value = "";
-      cgWrap.querySelectorAll("input:checked").forEach((i) => { i.checked = false; });
-      uWrap.querySelectorAll("input:checked").forEach((i) => { i.checked = false; });
+      cgw.querySelectorAll("input:checked").forEach((i) => { i.checked = false; });
+      uw.querySelectorAll("input:checked").forEach((i) => { i.checked = false; });
       renderWhatIf();
     });
-
     $("#cc-code").addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); $("#cc-add").click(); }
     });
-
     $("#wi-reset").addEventListener("click", function () {
-      state.whatIf = {};
-      state.custom = [];
-      save();
-      renderWhatIf();
+      state.whatIf = {}; state.custom = []; save(); renderWhatIf();
     });
     $("#wi-all").addEventListener("click", function () {
-      CANDIDATE_COURSES.forEach((c) => { state.whatIf[c.id] = true; });
-      save();
-      renderWhatIf();
+      CANDIDATES.forEach((c) => { state.whatIf[c.id] = true; }); save(); renderWhatIf();
     });
   }
 
@@ -769,77 +678,58 @@
 
   function renderContacts() {
     const usc = D.schools.filter((s) => s.id === "usc")[0];
-    const target = new Date(usc.deadline + "T23:59:59");
-    const days = Math.ceil((target - new Date()) / 86400000);
-
+    const days = Math.ceil((new Date(usc.deadline + "T23:59:59") - new Date()) / 86400000);
     $("#deadline-strip").innerHTML =
-      '<div class="deadline-strip"><div class="dl-num">' +
-      (days > 0 ? days : "—") + "</div>" +
+      '<div class="deadline-strip"><div class="dl-num">' + (days > 0 ? days : "—") + "</div>" +
       '<div class="dl-txt"><h3>' + (days > 0 ? "days until the USC Marshall deadline" : "USC Marshall deadline has passed") + "</h3>" +
-      "<p>" + esc(usc.deadlineLabel) + " · " + esc(usc.name) + ", " + esc(usc.major) +
-      " · 2 recommendation letters required</p></div></div>";
+      "<p>" + esc(usc.deadlineLabel) + " · " + esc(usc.name) + ", " + esc(usc.major) + " · 2 recommendation letters required</p></div></div>";
 
-    const wrap = $("#contact-list");
-    wrap.innerHTML = "";
-    D.contacts.forEach((c) => {
-      wrap.appendChild(el("div", "contact",
-        '<span class="c-name">' + esc(c.name) + "</span>" +
-        (c.email ? '<a href="mailto:' + esc(c.email) + '">' + esc(c.email) + "</a>" : "") +
-        (c.phone ? '<a href="tel:' + esc(c.phone.replace(/[^0-9+]/g, "")) + '">' + esc(c.phone) + "</a>" : "") +
-        '<span class="c-role">' + esc(c.role) + "</span>"));
-    });
+    const w = $("#contact-list");
+    w.innerHTML = "";
+    D.contacts.forEach((c) => w.appendChild(el("div", "contact",
+      '<span class="c-name">' + esc(c.name) + "</span>" +
+      (c.email ? '<a href="mailto:' + esc(c.email) + '">' + esc(c.email) + "</a>" : "") +
+      (c.phone ? '<a href="tel:' + esc(c.phone.replace(/[^0-9+]/g, "")) + '">' + esc(c.phone) + "</a>" : "") +
+      '<span class="c-role">' + esc(c.role) + "</span>")));
 
     $("#foot-meta").textContent =
-      D.meta.student + " · data current as of " + D.meta.asOf + " (" + D.meta.gpaSource + ")";
+      D.meta.student + " · " + D.meta.source + " audit " + D.meta.auditDate;
   }
 
-  /* ---------------- nav ---------------- */
+  /* ---------------- nav + title screen ---------------- */
 
   function initNav() {
     const links = Array.prototype.slice.call(document.querySelectorAll(".nav-inner a"));
-    const sections = links.map((a) => document.querySelector(a.getAttribute("href"))).filter(Boolean);
-
+    const secs = links.map((a) => document.querySelector(a.getAttribute("href"))).filter(Boolean);
     if ("IntersectionObserver" in window) {
-      const io = new IntersectionObserver(function (entries) {
-        entries.forEach(function (e) {
+      const io = new IntersectionObserver(function (es) {
+        es.forEach(function (e) {
           if (!e.isIntersecting) return;
           links.forEach((a) => a.classList.toggle("active", a.getAttribute("href") === "#" + e.target.id));
         });
       }, { rootMargin: "-58px 0px -65% 0px", threshold: 0 });
-      sections.forEach((s) => io.observe(s));
+      secs.forEach((s) => io.observe(s));
     }
-
     $("#enter-btn").addEventListener("click", function () {
       document.getElementById("overview").scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
 
-  /* ---------------- title screen ---------------- */
-
   function initTank() {
-    const frame = $("#tank-frame");
-    const ph = $("#tank-placeholder");
-
+    const frame = $("#tank-frame"), ph = $("#tank-placeholder");
     if (frame && ph) {
       const hide = function () { ph.style.opacity = "0"; setTimeout(function () { ph.hidden = true; }, 500); };
       ph.style.transition = "opacity .5s ease";
-      if (frame.contentDocument && frame.contentDocument.readyState === "complete") hide();
       frame.addEventListener("load", hide);
-      // The tank's own "Filling tank…" screen covers the gap between the
-      // iframe firing load and the models actually arriving; don't wait
-      // on it forever if the bundle fails outright.
       setTimeout(hide, 12000);
     }
 
-    // The embedded tank is decorative: pointer-events:none keeps the page
-    // scrollable (see the #tank-frame comment in styles.css). Its DEX,
-    // camera and ANGLE buttons therefore can't be clicked here, so hide
-    // them inside the frame rather than float dead controls over the
-    // title. The frame is same-origin, so a stylesheet injection does it
-    // without modifying the vendored build. The real controls live in the
-    // standalone tab that "Open the tank" opens.
+    // The embedded tank is inert (pointer-events:none keeps the page scrollable),
+    // so its DEX / camera / ANGLE buttons can't be clicked here. Hide them rather
+    // than float dead controls over the title. Same-origin, so a stylesheet
+    // injection does it without touching the vendored build.
     if (frame) {
-      const hideFrameChrome = function () {
+      const hideChrome = function () {
         try {
           const doc = frame.contentDocument;
           if (!doc || doc.getElementById("embed-chrome")) return;
@@ -847,28 +737,20 @@
           st.id = "embed-chrome";
           st.textContent = "body > button { display: none !important; }";
           (doc.head || doc.documentElement).appendChild(st);
-        } catch (err) { /* cross-origin: the buttons stay, harmlessly inert */ }
+        } catch (err) { /* cross-origin: they stay, harmlessly inert */ }
       };
-      frame.addEventListener("load", hideFrameChrome);
-      hideFrameChrome();
+      frame.addEventListener("load", hideChrome);
+      hideChrome();
     }
 
-    // Deep links skip the title screen entirely. Someone opening
-    // …/#open to check an action item shouldn't land on a WebGL scene
-    // first — and they shouldn't have to scroll past a frame that
-    // swallows drag gestures on a phone.
+    // Deep links skip the title screen: opening …/#open to check an action item
+    // should land on the dashboard, not on a WebGL scene.
     const hash = window.location.hash;
     if (hash && hash.length > 1) {
       const target = document.querySelector(hash);
-      if (target) {
-        // after layout settles — the iframe resizing can otherwise
-        // shift the anchor out from under the initial jump
-        requestAnimationFrame(function () {
-          setTimeout(function () {
-            target.scrollIntoView({ behavior: "auto", block: "start" });
-          }, 60);
-        });
-      }
+      if (target) requestAnimationFrame(function () {
+        setTimeout(function () { target.scrollIntoView({ behavior: "auto", block: "start" }); }, 60);
+      });
     }
   }
 
@@ -876,14 +758,15 @@
 
   load();
   renderTankStats();
+  renderDegree();
   renderOverview();
   renderOpen();
   renderTerms();
   renderCalGETC();
   renderUSC();
-  renderMajorPrep();
+  renderMajor();
   renderGPA();
-  initWhatIfControls();
+  initWhatIf();
   renderWhatIf();
   renderContacts();
   initNav();

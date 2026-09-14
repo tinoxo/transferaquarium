@@ -7,26 +7,23 @@ Static site. No backend, no build step. Deploys straight to GitHub Pages.
 
 ## What it does
 
-The point of the dashboard is to make one thing impossible to get wrong:
-
-> **Cal-GETC accepts AP exam scores. USC does not.**
-
-At USC, AP credit is elective-only and never satisfies a GE-A–H category. Two
-Cal-GETC areas currently read "complete" via AP while the matching USC categories
-are still fully open. Anywhere that happens, the dashboard marks it
-**Complete — via AP only** in amber with a striped background, and the Still Open
-section explains the consequence in plain language.
+Mirrors the shape of the Skyline DegreeWorks audit — progress ring, requirement
+blocks with COMPLETE / IN-PROGRESS / INCOMPLETE pills, per-course rows, and
+"Still needed" lines naming the courses that would close each gap — and adds the
+things the audit can't do: USC's own GE categories tracked alongside Cal-GETC, a
+running GPA, and a what-if mode for unscheduled courses.
 
 Sections:
 
 | Section | What's in it |
 |---|---|
-| Overview | Target schools, the Associate's-degree premise, the AP rule |
+| Overview | Target schools and the Associate's-degree premise |
+| Degree | The audit header — progress ring, units, degree GPA, top-level requirements |
 | Still Open | Action items derived live from the trackers — not hand-maintained |
 | Schedule | Every term, every course, tagged with what it actually fulfills |
-| Cal-GETC | Areas 1–6 with per-subarea status and its source |
-| USC GE | A–H, tracked separately, AP deliberately excluded as a source |
-| Major Prep | Per-school course list + application checklist |
+| Cal-GETC | Areas 1–6, each subarea with its satisfying course or its options |
+| USC GE | A–H, tracked separately from Cal-GETC |
+| Major Prep | The AS-T core block, plus a per-school checklist |
 | GPA | Per-term and cumulative, recalculates as grades are entered |
 | What-If | Toggle Summer 2027 candidates and see live requirement deltas |
 | Contacts | Counselors, admissions, days-to-deadline counter |
@@ -44,6 +41,11 @@ tank/         Vendored build of tinoxo/fish-tank — see tank/SOURCE.md
 ## Editing the data
 
 Everything the dashboard shows comes from `data.js`. Nothing else needs to change.
+
+Exam credit (AP and similar) appears as an ordinary completed course, because
+that is how it lands on the record — `HIST 201` and `PHYS 210`, graded `CRE`,
+with a `viaExam` label. `CRE` carries units but no grade points, so it counts
+toward requirements without moving the GPA.
 
 **Adding a course** — add it to the right term's `courses` array:
 
@@ -67,6 +69,9 @@ Useful flags:
 - `uscUnconfirmed: true` — renders as "Likely — unconfirmed" instead of a
   confirmed satisfaction. Use it until USC confirms in writing.
 - `unitsAssumed: true` — marks the unit count with an asterisk and a footnote.
+- `viaExam: "AP US History"` — notes that the credit came from an exam.
+- `options: [...]` on a Cal-GETC slot — the courses the audit lists as satisfying
+  it, shown under "Still needed" while the slot is open.
 - `flag: "elective"` — marks a course as fulfilling nothing (like ANTH 180).
 
 Status flows through automatically: the Cal-GETC and USC trackers, the Still Open
@@ -83,8 +88,10 @@ the strongest N it needs, and reports the *weakest* of those. So a category need
 two courses where one is done and one is planned reads "will be satisfied", not
 "satisfied".
 
-AP credit is registered as a source for Cal-GETC slots and **never** for USC
-categories — that exclusion is what makes the USC tracker honest.
+A course counts toward a USC GE category only if its `usc` array names that
+category. The exam-credit courses have an empty `usc` array, so Cal-GETC areas
+they cover read as complete while the USC categories stay open — which is what
+the plan actually looks like.
 
 ## The fish tank
 
@@ -155,9 +162,10 @@ either way; only the tank needs the server.
 
 - Grades, what-if selections and the prior-GPA record save to `localStorage` —
   per browser, not synced. The course data itself always comes from `data.js`.
-- Unit counts for Summer 2026 and the Summer 2027 candidates weren't in the source
-  brief and are marked with an asterisk. Confirm them in DegreeWorks.
-- Data current as of September 2026 (SMCCD DegreeWorks).
+- Summer 2027 candidate unit counts are assumed and marked with an asterisk.
+- The audit counts 7 in-progress Fall 2026 classes totalling 22 units; the 6 in
+  `data.js` account for 21. One 1-unit class is unidentified.
+- Data current as of the DegreeWorks audit dated 09/14/2026.
 - `tank/CREDITS.md` carries the model attribution from the fish-tank repo,
   including entries whose licensing is marked unconfirmed there. Publishing this
   repo republishes those models, so that uncertainty applies here too — worth
