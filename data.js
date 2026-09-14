@@ -28,9 +28,14 @@ const DATA = {
   },
 
   /* ---------- Target schools ---------- */
+  /* Colour-accurate monograms in each school's official palette, drawn inline
+     rather than using the institutions' real logos: this sandbox can't fetch
+     them, and the real marks come with usage rules. Swap in official artwork
+     any time — replace the svg string. */
   schools: [
     {
       id: "usc",
+      logo: '<svg viewBox="0 0 48 48" role="img" aria-label="USC"><rect width="48" height="48" rx="9" fill="#990000"/><text x="24" y="31" text-anchor="middle" fill="#FFCC00" font-family="Georgia, serif" font-size="16" font-weight="700" letter-spacing="0.5">USC</text></svg>',
       name: "USC Marshall",
       major: "Business Administration",
       tier: "primary",
@@ -44,6 +49,7 @@ const DATA = {
     },
     {
       id: "ucla",
+      logo: '<svg viewBox="0 0 48 48" role="img" aria-label="UCLA"><rect width="48" height="48" rx="9" fill="#2774AE"/><text x="24" y="30" text-anchor="middle" fill="#FFD100" font-family="Georgia, serif" font-size="13" font-weight="700" letter-spacing="0.2">UCLA</text></svg>',
       name: "UCLA",
       major: "Business Economics",
       tier: "reach",
@@ -57,6 +63,7 @@ const DATA = {
     },
     {
       id: "berkeley",
+      logo: '<svg viewBox="0 0 48 48" role="img" aria-label="UC Berkeley"><rect width="48" height="48" rx="9" fill="#003262"/><text x="24" y="31" text-anchor="middle" fill="#FDB515" font-family="Georgia, serif" font-size="17" font-weight="700">Cal</text></svg>',
       name: "UC Berkeley",
       major: "Haas / Economics",
       tier: "dream",

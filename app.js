@@ -239,7 +239,8 @@
     w.innerHTML = "";
     D.schools.forEach((s) => {
       w.appendChild(el("div", "card school-card",
-        '<div class="sc-top"><div><h3>' + esc(s.name) + "</h3>" +
+        '<div class="sc-top">' + (s.logo ? '<span class="sc-logo">' + s.logo + "</span>" : "") +
+        "<div><h3>" + esc(s.name) + "</h3>" +
         '<div class="sc-major">' + esc(s.major) + "</div></div>" +
         '<span class="sc-tier tier-' + s.tier + '">' + esc(s.tierLabel) + "</span></div>" +
         '<div class="sc-dl">&#9201; ' + esc(s.deadline ? "Deadline " + s.deadlineLabel : s.deadlineLabel) + "</div>" +
@@ -314,6 +315,12 @@
     w.innerHTML = "";
     const ord = { high: 0, med: 1, low: 2 };
     items.sort((a, b) => ord[a.sev] - ord[b.sev]);
+    const count = $("#open-count");
+    if (count) {
+      count.textContent = items.length;
+      count.classList.toggle("none", items.length === 0);
+    }
+
     const mark = { high: "&#9679;", med: "&#9681;", low: "&#9675;" };
     items.forEach((it) => w.appendChild(el("div", "open-item sev-" + it.sev,
       '<span class="oi-mark">' + mark[it.sev] + "</span><div>" +
@@ -493,7 +500,8 @@
       const units = courses.reduce((a, c) => a + (c.units || 0), 0);
       const notes = D.majorPrepSchoolNotes[s.id] || [];
       w.appendChild(el("div", "card school-card",
-        '<div class="sc-top"><div><h3>' + esc(s.name) + "</h3>" +
+        '<div class="sc-top">' + (s.logo ? '<span class="sc-logo">' + s.logo + "</span>" : "") +
+        "<div><h3>" + esc(s.name) + "</h3>" +
         '<div class="sc-major">' + esc(s.major) + "</div></div>" +
         '<span class="sc-tier tier-' + s.tier + '">' + esc(s.tierLabel) + "</span></div>" +
         '<div class="sc-sub">Major-prep courses on the plan · ' + units + " units</div>" +
@@ -698,6 +706,26 @@
 
   /* ---------------- nav + title screen ---------------- */
 
+  function initCollapse() {
+    const btn = $("#open-toggle"), body = $("#open-list");
+    if (!btn || !body) return;
+    const KEY = LS + ":open-collapsed";
+    let collapsed = false;
+    try { collapsed = localStorage.getItem(KEY) === "1"; } catch (e) { /* storage blocked */ }
+
+    const apply = function () {
+      body.hidden = collapsed;
+      btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    };
+    apply();
+
+    btn.addEventListener("click", function () {
+      collapsed = !collapsed;
+      apply();
+      try { localStorage.setItem(KEY, collapsed ? "1" : "0"); } catch (e) { /* storage blocked */ }
+    });
+  }
+
   function initNav() {
     const links = Array.prototype.slice.call(document.querySelectorAll(".nav-inner a"));
     const secs = links.map((a) => document.querySelector(a.getAttribute("href"))).filter(Boolean);
@@ -769,6 +797,7 @@
   initWhatIf();
   renderWhatIf();
   renderContacts();
+  initCollapse();
   initNav();
   initTank();
 })();

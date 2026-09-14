@@ -269,6 +269,9 @@ a { color: var(--blue); }
 .nav-inner::-webkit-scrollbar { display: none; }
 
 .nav-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 13px;
   font-weight: 700;
   color: var(--teal);
@@ -297,6 +300,45 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 16px 90px; }
 section { padding-top: 54px; scroll-margin-top: 58px; }
 
 .sec-head { margin-bottom: 18px; }
+
+/* Collapsible section header. The <h2> stays inside the button so the
+   heading itself is the hit target, which is what people aim at. */
+.sec-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.sec-toggle h2 { margin: 0; }
+.sec-toggle .chev {
+  color: var(--teal);
+  font-size: 15px;
+  line-height: 1;
+  transition: transform .2s ease;
+}
+.sec-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.sec-toggle:hover .chev { color: var(--ink); }
+.sec-toggle:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; border-radius: 4px; }
+
+.sec-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--coral);
+  border: 1px solid var(--coral);
+  background: rgba(255,107,107,.1);
+  border-radius: 999px;
+  padding: 2px 10px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.sec-count.none { color: var(--teal); border-color: var(--teal); background: rgba(53,214,192,.1); }
 .sec-head h2 {
   margin: 0;
   font-size: clamp(1.3rem, 3.4vw, 1.75rem);
@@ -797,7 +839,16 @@ select:focus, input:focus { outline: 2px solid rgba(53,214,192,.55); outline-off
 /* ---------- Schools / contacts ---------- */
 
 .school-card { display: flex; flex-direction: column; }
-.school-card .sc-top { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 4px; }
+.school-card .sc-top { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 4px; }
+
+.sc-logo {
+  width: 42px; height: 42px;
+  flex: none;
+  border-radius: 9px;
+  overflow: hidden;
+  display: block;
+}
+.sc-logo svg { display: block; width: 100%; height: 100%; }
 .school-card h3 { margin: 0; font-size: 16px; }
 .school-card .sc-major { color: var(--ink-dim); font-size: 13px; }
 .school-card .sc-tier {
